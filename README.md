@@ -5,7 +5,7 @@
 ## 🎯 Key Features
 
 - **Multi-Agent System**: Manager, Critic, and Tool Creation agents working together
-- **Genomic Reasoning**: Specialized prompts for CRISPR and genomic analysis (GenomeBench v3)
+- **Genomic Reasoning**: Specialized prompts for CRISPR and genomic analysis
 - **Dynamic Tool Loading**: Intelligent tool selection based on query analysis
 - **Real-time Collaboration**: WebSocket-based progress updates and workflow tracking
 - **Knowledge Management**: Memory system with Mem0 integration
