@@ -59,6 +59,8 @@ from ..tools.core import (
     # File access tools
     read_project_file,
     save_agent_file,
+    analyze_media_file,
+    analyze_gcs_media,  # For analyzing large files stored in GCS via signed URLs
 )
 
 # Import visualization tools
@@ -218,6 +220,8 @@ manager_tool_management = [
     # File access tools
     read_project_file,
     save_agent_file,
+    analyze_media_file,
+    analyze_gcs_media,   # For analyzing large files stored in GCS via signed URLs
     # Enhanced search tools
     enhanced_google_search,
     search_google_basic,

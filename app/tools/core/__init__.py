@@ -34,7 +34,9 @@ from .collaboration import (
 
 from .files import (
     read_project_file,
-    save_agent_file
+    save_agent_file,
+    analyze_media_file,
+    analyze_gcs_media
 )
 
 __all__ = [
@@ -65,8 +67,10 @@ __all__ = [
     # File access tools
     'read_project_file',
     'save_agent_file',
-    
-    # Tool management tools (still in stella_engine.py)
+    'analyze_media_file',
+    'analyze_gcs_media',
+
+    # Tool management tools (still in labos_engine.py)
     # 'list_dynamic_tools',
     # 'create_new_tool',
     # 'load_dynamic_tool',

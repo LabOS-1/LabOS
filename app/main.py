@@ -58,6 +58,7 @@ from app.api.system import router as system_router
 from app.api.websocket import router as websocket_router
 from app.api.auth import router as auth_router
 from app.api.admin import router as admin_router
+from app.api.gcs import router as gcs_router
 from app.services.labos_service import LabOSService
 from app.services.websocket_broadcast import websocket_broadcaster
 
@@ -143,6 +144,7 @@ app.include_router(files_router, prefix="/api/files", tags=["files"])
 app.include_router(memory_router, prefix="/api/memory", tags=["export"])
 app.include_router(system_router, prefix="/api/system", tags=["system"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+app.include_router(gcs_router, prefix="/api/gcs", tags=["gcs"])  # GCS upload for large files
 app.include_router(websocket_router, prefix="", tags=["websocket"])  # No prefix for /ws
 
 # Serve static files (data/outputs)

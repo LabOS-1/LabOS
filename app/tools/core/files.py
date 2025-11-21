@@ -7,6 +7,8 @@ from pathlib import Path
 import base64
 import mimetypes
 from uuid import UUID
+import asyncio
+from functools import partial
 
 from smolagents import tool
 from sqlalchemy import create_engine, select
@@ -450,10 +452,10 @@ Base64 preview (first {preview_len} chars):
 {preview}
 
 💡 Note: This is a binary file. Consider:
-   - If it's an image/PDF, describe what specific information you need
+   - If it's an image/PDF, use analyze_media_file() for AI-powered analysis
    - If it's structured data, ask user to convert to CSV/JSON/TXT
    - Use specialized tools for specific binary formats if available"""
-        
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -461,4 +463,242 @@ Base64 preview (first {preview_len} chars):
     finally:
         if session:
             session.close()
+
+
+# Media file extensions that Gemini can analyze
+MEDIA_EXTS = {
+    'image': {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'},
+    'video': {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.m4v', '.flv', '.wmv'},
+    'pdf': {'.pdf'}
+}
+
+
+@tool
+def analyze_media_file(file_id: str, prompt: str = "") -> str:
+    """Analyze an image, video, or PDF file using Google Gemini AI.
+
+    Use this tool when you need to understand the content of:
+    - Images (PNG, JPG, GIF, WebP, etc.)
+    - Videos (MP4, WebM, MOV, AVI, etc.)
+    - PDF documents
+
+    Args:
+        file_id: UUID string of the file in database (from read_project_file output)
+        prompt: Optional specific question about the file.
+                If empty, provides a general analysis.
+                Examples:
+                - "What text is visible in this image?"
+                - "Summarize the key points in this PDF"
+                - "Describe what happens in this video"
+                - "Extract data from this chart"
+
+    Returns:
+        Detailed AI analysis of the media file content
+
+    Example:
+        # Analyze an uploaded image
+        analysis = analyze_media_file(
+            file_id="cab61e7d-a627-48d4-9629-a57e00f05585",
+            prompt="What data is shown in this chart?"
+        )
+        print(analysis)
+    """
+    session = None
+    try:
+        # Import Gemini agent
+        from app.core.agents.gemini_agent import gemini_agent
+
+        if not gemini_agent.model:
+            return "❌ Error: Gemini API is not configured. Please set GOOGLE_API_KEY in environment."
+
+        session = get_sync_session()
+
+        # Validate and convert UUID
+        try:
+            file_uuid = UUID(file_id)
+        except ValueError:
+            return f"❌ Invalid file ID format: {file_id}\nExpected: UUID string"
+
+        # Query database
+        result = session.execute(
+            select(ProjectFile).where(ProjectFile.id == file_uuid)
+        )
+        pf = result.scalar_one_or_none()
+
+        if not pf:
+            return f"❌ File with ID {file_id} not found in database"
+
+        filename = pf.original_filename or "unknown"
+        ext = Path(filename).suffix.lower()
+        mime_type = pf.content_type or ""
+
+        # Check if file type is supported
+        is_image = ext in MEDIA_EXTS['image'] or mime_type.startswith('image/')
+        is_video = ext in MEDIA_EXTS['video'] or mime_type.startswith('video/')
+        is_pdf = ext in MEDIA_EXTS['pdf'] or mime_type == 'application/pdf'
+
+        if not (is_image or is_video or is_pdf):
+            return f"""❌ File type not supported for media analysis.
+File: {filename}
+Type: {mime_type or ext}
+
+Supported types:
+- Images: {', '.join(sorted(MEDIA_EXTS['image']))}
+- Videos: {', '.join(sorted(MEDIA_EXTS['video']))}
+- PDFs: .pdf
+
+💡 For text files, use read_project_file() instead."""
+
+        # Set default prompt based on file type
+        if not prompt:
+            if is_video:
+                prompt = "Watch this video carefully and provide a detailed summary including: 1) Key events or scenes, 2) Main subjects/people, 3) Text or captions visible, 4) Audio/dialogue if present, 5) Important timestamps or transitions."
+            elif is_image:
+                prompt = "Analyze this image in detail including: 1) What you see, 2) Text content, 3) Colors and composition, 4) Any data, charts, or diagrams, 5) Relevant context."
+            else:  # PDF
+                prompt = "Analyze this PDF document. Summarize the key points, extract important data, tables, and describe its structure."
+
+        # Get file data
+        file_data = pf.file_data
+        file_size = len(file_data)
+
+        # Check size limits
+        max_sizes = {
+            'image': 20 * 1024 * 1024,   # 20MB
+            'video': 100 * 1024 * 1024,  # 100MB
+            'pdf': 50 * 1024 * 1024      # 50MB
+        }
+
+        file_type_key = 'video' if is_video else ('pdf' if is_pdf else 'image')
+        max_size = max_sizes[file_type_key]
+
+        if file_size > max_size:
+            max_mb = max_size // (1024 * 1024)
+            return f"❌ File too large for analysis. Size: {file_size / (1024*1024):.1f}MB, Max: {max_mb}MB"
+
+        # Run Gemini analysis (sync wrapper for async function)
+        print(f"🔍 Analyzing {file_type_key}: {filename} ({file_size:,} bytes) with Gemini...")
+
+        # Create event loop if needed and run async function
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # Run the async analyze_file method
+        if loop.is_running():
+            # We're in an async context, need to use run_in_executor
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    gemini_agent.analyze_file(file_data, mime_type or f"{file_type_key}/*", prompt)
+                )
+                analysis_result = future.result(timeout=300)  # 5 minute timeout
+        else:
+            # Not in async context, can run directly
+            analysis_result = loop.run_until_complete(
+                gemini_agent.analyze_file(file_data, mime_type or f"{file_type_key}/*", prompt)
+            )
+
+        # Format result
+        type_emoji = "🎥" if is_video else ("📄" if is_pdf else "🖼️")
+
+        return f"""{type_emoji} Media Analysis: {filename}
+Type: {mime_type or ext}
+Size: {file_size:,} bytes ({file_size / (1024*1024):.2f} MB)
+Model: Gemini
+
+{'=' * 50}
+ANALYSIS:
+{'=' * 50}
+{analysis_result}
+{'=' * 50}"""
+
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return f"❌ Error analyzing media file:\n{str(e)}\n\nDetails:\n{error_details}"
+    finally:
+        if session:
+            session.close()
+
+
+@tool
+def analyze_gcs_media(gcs_uri: str, mime_type: str, prompt: str = "") -> str:
+    """Analyze a large media file from Google Cloud Storage using Vertex AI Gemini.
+
+    Use this tool for large video files (>30MB) that were uploaded directly to GCS.
+    This bypasses the Cloud Run 32MB request limit and supports files up to 2GB.
+
+    Args:
+        gcs_uri: GCS URI in format 'gs://bucket-name/path/to/file'
+        mime_type: MIME type of the file (e.g., 'video/mp4', 'image/png')
+        prompt: Optional specific question about the file.
+                If empty, provides a general analysis.
+
+    Returns:
+        Detailed AI analysis of the media file content
+
+    Example:
+        # Analyze a large video uploaded to GCS
+        analysis = analyze_gcs_media(
+            gcs_uri="gs://labos-uploads/uploads/user123/project456/video.mp4",
+            mime_type="video/mp4",
+            prompt="Summarize the key events in this video"
+        )
+        print(analysis)
+    """
+    try:
+        from app.core.agents.gemini_agent import gemini_agent
+
+        if not gemini_agent.vertex_client:
+            return "❌ Error: Vertex AI client not initialized. Cannot analyze GCS files."
+
+        if not gcs_uri.startswith("gs://"):
+            return f"❌ Invalid GCS URI format. Expected 'gs://bucket/path', got: {gcs_uri}"
+
+        # Determine file type for emoji
+        is_video = mime_type.startswith('video/')
+        is_pdf = mime_type == 'application/pdf'
+        type_emoji = "🎥" if is_video else ("📄" if is_pdf else "🖼️")
+
+        print(f"🔍 Analyzing GCS file via Vertex AI: {gcs_uri}")
+
+        # Run async analysis
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    gemini_agent.analyze_gcs_file(gcs_uri, mime_type, prompt)
+                )
+                analysis_result = future.result(timeout=600)  # 10 minute timeout for large videos
+        else:
+            analysis_result = loop.run_until_complete(
+                gemini_agent.analyze_gcs_file(gcs_uri, mime_type, prompt)
+            )
+
+        return f"""{type_emoji} GCS Media Analysis
+URI: {gcs_uri}
+Type: {mime_type}
+Model: Vertex AI Gemini
+
+{'=' * 50}
+ANALYSIS:
+{'=' * 50}
+{analysis_result}
+{'=' * 50}"""
+
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return f"❌ Error analyzing GCS media:\n{str(e)}\n\nDetails:\n{error_details}"
 
