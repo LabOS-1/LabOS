@@ -1,0 +1,31 @@
+/* Utility classes and effects */
+
+/* Glass effect */
+.glass-effect {
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6, #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Responsive design utilities */
+@media (max-width: 768px) {
+  .stella-chat-container {
+    padding: 8px;
+  }
+  
+  .stella-message.user,
+  .stella-message.assistant {
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
+

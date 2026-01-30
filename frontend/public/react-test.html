@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>React Dual Panel Test</title>
+    <style>
+        body { margin: 0; font-family: Arial; }
+        .container { width: 100vw; height: 100vh; display: flex; }
+        .left { width: 60%; background: linear-gradient(45deg, #ff0000, #ff6600); 
+                display: flex; align-items: center; justify-content: center; 
+                color: white; text-align: center; font-size: 24px; }
+        .right { width: 40%; background: linear-gradient(45deg, #0000ff, #00ffff); 
+                 display: flex; align-items: center; justify-content: center; 
+                 color: white; text-align: center; font-size: 24px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="left">
+            <div>
+                <h1>💬 React Test Successful</h1>
+                <p>If you can see this page</p>
+                <p>The problem is with React Router</p>
+                <p>Time: <span id="time"></span></p>
+            </div>
+        </div>
+        <div class="right">
+            <div>
+                <h1>🔬 Solution</h1>
+                <p>We need to fix the router configuration</p>
+                <p>Or create an independent chat page</p>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('time').textContent = new Date().toLocaleTimeString();
+        setInterval(() => {
+            document.getElementById('time').textContent = new Date().toLocaleTimeString();
+        }, 1000);
+        console.log('React test page loaded');
+    </script>
+</body>
+</html>

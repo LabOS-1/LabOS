@@ -1,0 +1,46 @@
+# ==========================================
+# LabOS - Development Environment Override (Example)
+# ==========================================
+# Copy to docker-compose.dev.yml and fill in your values
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Domain: dev.your-domain.com (Nginx reverse proxy + SSL on VM)
+# Database: Cloud SQL via Proxy (TCP, not unix socket)
+# ==========================================
+
+services:
+  backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Core settings
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - PORT=18800
+      # URLs (domain-based, behind Nginx reverse proxy)
+      - FRONTEND_URL=https://dev.your-domain.com
+      - BACKEND_URL=https://dev.your-domain.com
+      - CORS_ORIGINS=https://dev.your-domain.com
+      - AUTH0_BASE_URL=https://dev.your-domain.com
+      # Database (Cloud SQL Proxy running on VM localhost)
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      # Sandbox storage
+      - SANDBOX_ROOT=/data/sandboxes
+      - SYNC_TO_GCS=false
+      # Feature flags
+      - ENABLE_MEMORY=false
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Build-time args for Next.js (embedded at build)
+        # Backend: internal Docker network (server-side requests)
+        # WebSocket: public domain with wss:// (browser-side)
+        NEXT_PUBLIC_BACKEND_URL: http://backend:18800
+        NEXT_PUBLIC_WEBSOCKET_URL: wss://dev.your-domain.com/ws
+    environment:
+      - NODE_ENV=production
+      - AUTH0_BASE_URL=https://dev.your-domain.com

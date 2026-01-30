@@ -1,0 +1,67 @@
+/* Dark theme styles for Ant Design components */
+
+.dark-tabs .ant-tabs-tab {
+  color: #d1d5db !important;
+}
+
+.dark-tabs .ant-tabs-tab:hover {
+  color: #60a5fa !important;
+}
+
+.dark-tabs .ant-tabs-tab.ant-tabs-tab-active {
+  color: #60a5fa !important;
+}
+
+.dark-tabs .ant-tabs-ink-bar {
+  background: #60a5fa !important;
+}
+
+.dark-tabs .ant-tabs-content-holder {
+  background: #1f2937 !important;
+}
+
+.dark-tabs .ant-tabs-tabpane {
+  background: #1f2937 !important;
+}
+
+.dark-tabs .ant-tabs-nav {
+  background: #374151 !important;
+  border-bottom: 1px solid #4b5563 !important;
+}
+
+/* Card dark theme */
+.ant-card.bg-gray-700 .ant-card-head {
+  background: #374151 !important;
+  border-bottom: 1px solid #4b5563 !important;
+}
+
+.ant-card.bg-gray-700 .ant-card-head-title {
+  color: #ffffff !important;
+}
+
+.ant-card.bg-gray-700 .ant-card-body {
+  background: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Progress bar dark theme */
+.ant-progress-bg {
+  background: #60a5fa !important;
+}
+
+/* Badge dark theme */
+.ant-badge-status-text {
+  color: #d1d5db !important;
+}
+
+/* List dark theme */
+.ant-list-item {
+  border-bottom: 1px solid #4b5563 !important;
+}
+
+/* Tag dark theme */
+.ant-tag {
+  background: #374151 !important;
+  border: 1px solid #4b5563 !important;
+  color: #ffffff !important;
+}

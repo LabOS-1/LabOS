@@ -1,0 +1,60 @@
+# ==========================================
+# LabOS - Docker Compose Base Configuration
+# ==========================================
+# Usage:
+#   Development (local): docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   Production (VM):     docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# ==========================================
+
+services:
+  # ==========================================
+  # Backend Service (FastAPI)
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: labos-backend
+    ports:
+      - "18800:18800"
+    volumes:
+      - ./data:/data
+    env_file:
+      - ./backend/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18800/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - labos-network
+
+  # ==========================================
+  # Frontend Service (Next.js)
+  # ==========================================
+  frontend:
+    container_name: labos-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - labos-network
+
+# ==========================================
+# Networks
+# ==========================================
+networks:
+  labos-network:
+    driver: bridge
+
+# ==========================================
+# Volumes (for data persistence)
+# ==========================================
+volumes:
+  labos-data:
+    driver: local

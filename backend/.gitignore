@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and logs (all runtime data)
+data/
+../data/
+
+# Memory databases (runtime generated, contains user data)
+*.sqlite3
+*.bin
+
+# Temporary files
+*.tmp
+temp/
+/tmp/
+
+# Cloud deployment
+cloudbuild.yaml
+cloudbuild.yaml.backup
+*.yaml.backup
+
+# Configuration (secrets)
+config/secrets.yaml
+.env
+.env.local
+.env.backup
+.env.*.backup
+*.env.backup
+!.env.example
+
+# Legacy files (backup during restructure)
+# Uncomment these after confirming new structure works
+# labos_core.py
+# labos_core_wrapper.py  
+# labos_integration_bridge.py
+# predefined_tools.py
+# memory_manager.py
+# Knowledge_base.py
+# agent_outputs/
+# prompts/
+# new_tools/

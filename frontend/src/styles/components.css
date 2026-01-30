@@ -1,0 +1,49 @@
+/* STELLA application specific component styles */
+
+.stella-chat-container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.stella-workflow-panel {
+  border-left: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+
+.stella-message {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.stella-message.user {
+  background: #e3f2fd;
+  margin-left: 20%;
+}
+
+.stella-message.assistant {
+  background: #f5f5f5;
+  margin-right: 20%;
+}
+
+/* Loading animations */
+.stella-loading {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Intercom widget positioning adjustments */
+/* Move Intercom launcher button to avoid blocking send button */
+/* Only using Intercom's official API (vertical_padding: 200) */
+/* CSS rules removed to avoid conflicts with Intercom's internal positioning */
+
+

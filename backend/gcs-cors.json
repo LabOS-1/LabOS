@@ -1,0 +1,9 @@
+[
+  {
+    "origin": ["https://labos-agent.com", "https://www.labos-agent.com", "https://labos-frontend-843173980594.us-central1.run.app", "http://localhost:3000"],
+    "method": ["PUT", "GET", "HEAD", "OPTIONS"],
+    "requestHeader": ["Content-Type"],
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "ETag"],
+    "maxAgeSeconds": 3600
+  }
+]

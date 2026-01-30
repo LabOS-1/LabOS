@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*.so
+.Python
+.venv
+venv
+ENV
+env
+*.egg-info
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Data (mounted as volume)
+data/
+../data/
+
+# Logs
+*.log
+
+# Tests
+tests/
+pytest.ini
+.coverage
+
+# Docs
+docs/
+*.md
+
+# Environment files (use docker-compose env_file)
+.env
+.env.*

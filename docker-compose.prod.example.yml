@@ -1,0 +1,58 @@
+# ==========================================
+# LabOS - Production Environment Override (Example)
+# ==========================================
+# Copy to docker-compose.prod.yml and fill in your values
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Domain: your-domain.com (Nginx reverse proxy + SSL on VM)
+# ==========================================
+
+services:
+  backend:
+    environment:
+      # Core settings
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - PORT=18800
+      # URLs (domain-based, behind Nginx reverse proxy)
+      - FRONTEND_URL=https://your-domain.com
+      - BACKEND_URL=https://your-domain.com
+      - CORS_ORIGINS=https://your-domain.com
+      - AUTH0_BASE_URL=https://your-domain.com
+      # Database (Cloud SQL Proxy running on VM localhost)
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      # Sandbox storage
+      - SANDBOX_ROOT=/data/sandboxes
+      - SYNC_TO_GCS=true
+      # Feature flags
+      - ENABLE_MEMORY=false
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Build-time args for Next.js (embedded at build)
+        # Backend: internal Docker network (server-side requests)
+        # WebSocket: public domain with wss:// (browser-side)
+        NEXT_PUBLIC_BACKEND_URL: http://backend:18800
+        NEXT_PUBLIC_WEBSOCKET_URL: wss://your-domain.com/ws
+    environment:
+      - NODE_ENV=production
+      - AUTH0_BASE_URL=https://your-domain.com
+
+  # Optional: Cloud SQL Proxy as a service
+  # Uncomment if you want to run Cloud SQL Proxy in Docker
+  # cloud-sql-proxy:
+  #   image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.0
+  #   container_name: labos-cloudsql-proxy
+  #   command:
+  #     - "--address=0.0.0.0"
+  #     - "--port=5432"
+  #     - "YOUR_PROJECT:YOUR_REGION:YOUR_INSTANCE"
+  #   ports:
+  #     - "5432:5432"
+  #   networks:
+  #     - labos-network
+  #   restart: unless-stopped

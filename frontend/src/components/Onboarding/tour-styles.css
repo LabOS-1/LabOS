@@ -1,0 +1,102 @@
+/**
+ * Custom styles for STELLA Onboarding Tour
+ * Enhances driver.js default styling with arrows and animations
+ */
+
+/* Custom popover styling */
+.stella-tour-popover {
+  max-width: 450px;
+  z-index: 99999 !important;
+}
+
+/* Ensure popover is positioned correctly and visible */
+.driver-popover {
+  position: fixed !important;
+  z-index: 99999 !important;
+  max-width: 450px;
+}
+
+/* Center popover when no element is specified */
+.driver-popover-container {
+  position: fixed !important;
+  z-index: 99999 !important;
+}
+
+/* Simple highlight for elements - no animation or glow */
+.driver-highlighted-element {
+  position: relative !important;
+  z-index: 10000 !important; /* Above overlay but below popover */
+}
+
+/* Subtle overlay - visible but non-blocking */
+.driver-overlay {
+  background-color: rgba(0, 0, 0, 0.15) !important; /* Very subtle dark overlay */
+  pointer-events: none !important; /* Don't block clicks */
+  opacity: 1 !important;
+}
+
+/* Remove arrow styles - they conflict with positioning */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Progress bar custom styling */
+.driver-popover-progress-text {
+  font-weight: 600;
+  color: #1976d2;
+}
+
+/* Button hover effects */
+.driver-popover-next-btn,
+.driver-popover-prev-btn,
+.driver-popover-close-btn {
+  transition: all 0.2s ease-in-out !important;
+}
+
+.driver-popover-next-btn:hover {
+  transform: translateX(2px);
+}
+
+.driver-popover-prev-btn:hover {
+  transform: translateX(-2px);
+}
+
+/* Navigation indicator */
+.tour-navigation-hint {
+  display: inline-block;
+  padding: 4px 8px;
+  background: #e3f2fd;
+  border-radius: 4px;
+  color: #1976d2;
+  font-size: 0.875rem;
+  margin-top: 8px;
+}
+
+/* Loading spinner for page transitions */
+.tour-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.tour-loading::after {
+  content: '';
+  width: 20px;
+  height: 20px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #1976d2;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

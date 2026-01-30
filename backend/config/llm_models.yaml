@@ -1,0 +1,94 @@
+# =================================================================
+# LABOS LLM Models Configuration
+# =================================================================
+# This file defines which LLM each agent uses
+#
+# Format: provider/model_name
+#   - provider: gemini, anthropic, openai, openrouter
+#   - model_name: specific model (e.g., claude-sonnet-4)
+#
+# Examples:
+#   - anthropic/claude-sonnet-4
+#   - gemini/gemini-3-flash-preview
+#   - openai/gpt-4o
+#   - openrouter/anthropic/claude-sonnet-4
+# =================================================================
+
+# Agent LLM Assignments
+agents:
+  manager:
+    model: gemini/gemini-3-flash-preview
+    temperature: 0.1
+    max_tokens: 4096
+    max_iterations: 15
+    description: "Coordinates and delegates to other agents"
+    extra_params:
+      google_search: true
+
+  dev_agent:
+    model: gemini/gemini-3-flash-preview
+    temperature: 0.1
+    max_tokens: 4096
+    max_iterations: 10
+    description: "Handles research, analysis, and tool execution"
+    extra_params:
+      google_search: true
+
+  critic_agent:
+    model: gemini/gemini-3-flash-preview
+    temperature: 0.2
+    max_tokens: 4096
+    max_iterations: 6
+    description: "Evaluates quality and provides feedback"
+
+  tool_creation_agent:
+    model: gemini/gemini-3-flash-preview
+    temperature: 0.1
+    max_tokens: 4096
+    max_iterations: 8
+    description: "Creates new tools dynamically"
+
+# Global Defaults (fallback if agent not configured)
+defaults:
+  model: gemini/gemini-3-flash-preview
+  temperature: 0.1
+  max_tokens: 4096
+
+# Available LLM Options (for reference/frontend)
+available_models:
+  gemini:
+    display_name: "Google Gemini"
+    models:
+      - name: gemini-3-pro-preview
+        display_name: "gemini-3-pro-preview"
+        context_window: 1000000
+        cost_per_1m_tokens: 0.075  # Input
+
+
+  anthropic:
+    display_name: "Anthropic Claude"
+    models:
+      - name: claude-sonnet-4.5
+        display_name: "Claude Sonnet 4"
+        context_window: 200000
+        cost_per_1m_tokens: 3.00
+
+
+  openai:
+    display_name: "OpenAI"
+    models:
+      - name: gpt-4o
+        display_name: "GPT-4o"
+        context_window: 128000
+        cost_per_1m_tokens: 2.50
+
+  openrouter:
+    display_name: "OpenRouter (Any Model)"
+    description: "Access 100+ models through OpenRouter API"
+    models:
+      - name: anthropic/claude-sonnet-4
+        display_name: "Claude Sonnet 4 (via OpenRouter)"
+      - name: google/gemini-3-flash-preview
+        display_name: "Gemini 2.0 Flash (via OpenRouter)"
+      - name: openai/gpt-4o
+        display_name: "GPT-4o (via OpenRouter)"

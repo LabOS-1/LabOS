@@ -1,0 +1,11 @@
+/* Ant Design component overrides */
+
+.ant-layout {
+  background: transparent;
+}
+
+.ant-layout-content {
+  background: transparent;
+}
+
+
