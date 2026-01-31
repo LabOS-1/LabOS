@@ -336,7 +336,10 @@ export const useProjectChat = (projectId: string) => {
       }
 
       // Use files endpoint (supports 1-5 files)
-      const response = await fetch(`${config.api.baseUrl}/api/v2/chat/projects/${projectId}/messages/with-files`, {
+      // For large file uploads, bypass Next.js proxy and call backend directly
+      // This avoids the proxy body size limit issue
+      const fileUploadBaseUrl = process.env.NEXT_PUBLIC_BACKEND_DIRECT_URL || config.api.baseUrl;
+      const response = await fetch(`${fileUploadBaseUrl}/api/v2/chat/projects/${projectId}/messages/with-files`, {
         method: 'POST',
         headers,
         credentials: 'include',

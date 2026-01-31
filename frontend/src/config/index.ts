@@ -102,11 +102,6 @@ export const featureFlags = config.features;
 export const validateConfig = (): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
 
-  // In development, empty baseUrl is OK (uses Next.js rewrites)
-  // In production, baseUrl is required
-  if (isProduction && !config.api.baseUrl) {
-    errors.push('API base URL is not configured');
-  }
 
   if (!config.websocket.url) {
     errors.push('WebSocket URL is not configured');

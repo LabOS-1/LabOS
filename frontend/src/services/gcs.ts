@@ -30,9 +30,13 @@ interface UploadProgress {
 
 /**
  * Check if a file should be uploaded via GCS (for large files)
+ * Currently disabled - all files use direct upload to sandbox
+ * GCS can be re-enabled in the future for VM scaling
  */
-export const shouldUseGCSUpload = (file: File): boolean => {
-  return file.size > GCS_UPLOAD_THRESHOLD;
+export const shouldUseGCSUpload = (_file: File): boolean => {
+  // GCS upload disabled - all files go to sandbox via direct upload
+  // TODO: Re-enable when GCS is needed for VM scaling
+  return false;
 };
 
 /**

@@ -936,8 +936,13 @@ class MultiAgentSystem:
             system_prompt = load_langchain_agent_prompt("follow_up_agent")
 
             # Create a lightweight model for fast generation
-            flash_model = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
+            # Default to gemini-2.5-flash which supports structured output well
+            flash_model = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
             api_key = os.getenv("GOOGLE_API_KEY")
+
+            if not api_key:
+                print("⚠️ GOOGLE_API_KEY not set, skipping follow-up questions")
+                return []
 
             llm = ChatGoogleGenerativeAI(
                 model=flash_model,
@@ -946,8 +951,13 @@ class MultiAgentSystem:
                 max_output_tokens=512,
             )
 
-            # Use structured output for reliable JSON parsing
-            structured_llm = llm.with_structured_output(FollowUpQuestions)
+            # Use structured output with json_schema method (Gemini native controlled generation)
+            # This uses response_mime_type="application/json" + response_json_schema
+            # More reliable than function_calling as it constrains output at generation time
+            structured_llm = llm.with_structured_output(
+                FollowUpQuestions,
+                method="json_schema"
+            )
 
             # Build messages with system prompt from YAML
             messages = [
@@ -958,11 +968,20 @@ class MultiAgentSystem:
             print(f"⚡ Generating follow-up questions with structured output ({flash_model})...")
 
             # Invoke with structured output - returns Pydantic object directly
-            result = structured_llm.invoke(messages)
+            # Retry up to 2 times if result is None
+            result = None
+            for attempt in range(2):
+                try:
+                    result = structured_llm.invoke(messages)
+                    if result is not None:
+                        break
+                    print(f"⚠️ Attempt {attempt + 1}: Structured output returned None, retrying...")
+                except Exception as retry_err:
+                    print(f"⚠️ Attempt {attempt + 1} failed: {retry_err}")
 
-            # Handle None result (can happen with API issues or unparseable response)
+            # Handle None result after retries
             if result is None:
-                print("⚠️ Structured output returned None (possible API/parsing issue)")
+                print(f"⚠️ Structured output failed after retries (Model: {flash_model})")
                 return []
 
             questions = result.follow_up_questions

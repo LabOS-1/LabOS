@@ -216,7 +216,14 @@ async def process_message_with_agent(
                 file_context = f"\n\n[System: User uploaded a file. {file_contexts[0]}]"
             else:
                 files_list = "\n".join(file_contexts)
-                file_context = f"\n\n[System: User uploaded {len(files_to_process)} files:\n{files_list}\n\nUse the appropriate tool for each file to read/analyze them.]"
+                # Count video files
+                video_count = sum(1 for f in files_to_process if f.get("content_type", "").startswith("video/"))
+                if video_count > 1:
+                    # Special instruction for multiple videos - process one at a time
+                    file_context = f"\n\n[System: User uploaded {len(files_to_process)} files including {video_count} videos:\n{files_list}\n\n⚠️ IMPORTANT: Process video files ONE AT A TIME. Analyze the first video completely, then proceed to the next. This prevents memory issues with large video files.]"
+                else:
+                    # Multiple files but not multiple videos
+                    file_context = f"\n\n[System: User uploaded {len(files_to_process)} files:\n{files_list}]"
 
             query_content = message_content + file_context
 
@@ -375,10 +382,66 @@ async def process_message_with_agent(
 
                 logger.info(f"[V2] Emitted completion workflow step with {len(output_content)} chars")
 
-                # Save AI response
+                # Start follow-up generation in parallel with workflow step saves
+                follow_up_future = None
+                followup_executor = None
+                if result.get("success", True) and output_content:
+                    try:
+                        from app.core.engines.langchain.multi_agent_system import generate_follow_up_questions as gen_followups
+                        followup_executor = ThreadPoolExecutor(max_workers=1)
+                        follow_up_future = loop.run_in_executor(
+                            followup_executor,
+                            lambda: gen_followups(
+                                user_query=message_content,
+                                ai_response=output_content
+                            )
+                        )
+                        logger.info(f"[V2] ⚡ Follow-up generation started in parallel")
+                    except Exception as e:
+                        logger.warning(f"[V2] Failed to start follow-up generation: {e}")
+
+                # Save workflow steps while follow-up generates
+                if ws_callback.collected_steps:
+                    class StepObject:
+                        def __init__(self, step_dict):
+                            self.type = step_dict.get("step_type", "unknown")
+                            self.title = step_dict.get("title", "Untitled")
+                            self.description = step_dict.get("description", "")
+                            self.status = "completed"
+                            self.tool_name = step_dict.get("tool_name")
+                            self.tool_result = step_dict.get("tool_result")
+                            self.step_metadata = step_dict.get("step_metadata")
+
+                    saved_count = 0
+                    for i, step_dict in enumerate(ws_callback.collected_steps):
+                        step_obj = StepObject(step_dict)
+                        success = await WorkflowDatabase.save_workflow_step(
+                            project_id=project_id,
+                            workflow_id=workflow_id,
+                            step=step_obj,
+                            step_index=i + 1
+                        )
+                        if success:
+                            saved_count += 1
+                    logger.info(f"[V2] Saved {saved_count}/{len(ws_callback.collected_steps)} workflow steps")
+
+                # Await follow-up questions before saving response
+                follow_up_questions = []
+                if follow_up_future:
+                    try:
+                        follow_up_questions = await follow_up_future
+                        logger.info(f"[V2] Generated {len(follow_up_questions)} follow-up questions")
+                    except Exception as e:
+                        logger.warning(f"[V2] Failed to generate follow-up questions: {e}")
+                    finally:
+                        if followup_executor:
+                            followup_executor.shutdown(wait=False)
+
+                # Save AI response WITH follow-up questions
                 response_metadata = {
                     "success": result.get("success", True),
-                    "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0
+                    "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0,
+                    "follow_up_questions": follow_up_questions
                 }
                 # Support both single file and multiple files
                 if attached_files:
@@ -395,35 +458,7 @@ async def process_message_with_agent(
                     response_dict,
                     workflow_id
                 )
-                logger.info(f"[V2] Saved AI response to database, execution_id: {execution_id}")
-
-                # Save workflow steps if available
-                if ws_callback.collected_steps:
-                    # Create simple objects from dict steps for database persistence
-                    class StepObject:
-                        def __init__(self, step_dict):
-                            self.type = step_dict.get("step_type", "unknown")
-                            self.title = step_dict.get("title", "Untitled")
-                            self.description = step_dict.get("description", "")
-                            self.status = "completed"
-                            self.tool_name = step_dict.get("tool_name")
-                            self.tool_result = step_dict.get("tool_result")
-                            self.step_metadata = step_dict.get("step_metadata")
-
-                    # Save each step individually
-                    saved_count = 0
-                    for i, step_dict in enumerate(ws_callback.collected_steps):
-                        step_obj = StepObject(step_dict)
-                        success = await WorkflowDatabase.save_workflow_step(
-                            project_id=project_id,
-                            workflow_id=workflow_id,
-                            step=step_obj,
-                            step_index=i + 1
-                        )
-                        if success:
-                            saved_count += 1
-
-                    logger.info(f"[V2] Saved {saved_count}/{len(ws_callback.collected_steps)} workflow steps")
+                logger.info(f"[V2] Saved AI response to database with {len(follow_up_questions)} follow-up questions, execution_id: {execution_id}")
 
                 # Send chat_completed WebSocket message
                 try:
@@ -442,12 +477,13 @@ async def process_message_with_agent(
                                 "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0
                             }
                         },
+                        "follow_up_questions": follow_up_questions,
                         "timestamp": datetime.now().isoformat(),
                         "action": "project_updated"
                     }
 
                     await websocket_broadcaster.broadcast(completion_message)
-                    logger.info(f"[V2] Broadcasted chat_completed message")
+                    logger.info(f"[V2] ✅ Answer + {len(follow_up_questions)} follow-up questions delivered together")
                 except Exception as ws_error:
                     logger.error(f"[V2] Failed to broadcast chat_completed: {ws_error}")
 
@@ -867,28 +903,8 @@ async def send_message_to_project_v2(
 
                 logger.info(f"[V2] Emitted completion workflow step with {len(output_content)} chars")
 
-                # Save AI response and workflow execution to database
-                # NOTE: WorkflowDatabase.save_response_to_project() handles both:
-                # 1. Creating ChatMessage (ASSISTANT role)
-                # 2. Creating WorkflowExecution record
-                # Format response for save_response_to_project (expects dict with 'content' key)
-                response_dict = {
-                    "content": result.get("output", ""),
-                    "metadata": {
-                        "success": result.get("success", True),
-                        "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0
-                    }
-                }
-                execution_id = await WorkflowDatabase.save_response_to_project(
-                    project_id,
-                    response_dict,
-                    workflow_id
-                )
-                logger.info(f"[V2] Workflow execution saved, ID: {execution_id}")
-
-                # Save workflow steps if available
+                # Save workflow steps while follow-up generates
                 if ws_callback.collected_steps:
-                    # Create simple objects from dict steps for database persistence
                     class StepObject:
                         def __init__(self, step_dict):
                             self.type = step_dict.get("step_type", "unknown")
@@ -899,7 +915,6 @@ async def send_message_to_project_v2(
                             self.tool_result = step_dict.get("tool_result")
                             self.step_metadata = step_dict.get("step_metadata")
 
-                    # Save each step individually
                     saved_count = 0
                     for i, step_dict in enumerate(ws_callback.collected_steps):
                         step_obj = StepObject(step_dict)
@@ -911,10 +926,9 @@ async def send_message_to_project_v2(
                         )
                         if success:
                             saved_count += 1
-
                     logger.info(f"[V2] Saved {saved_count}/{len(ws_callback.collected_steps)} workflow steps")
 
-                # Await follow-up questions (started earlier, running in parallel with DB saves)
+                # Await follow-up questions before saving response
                 follow_up_questions = []
                 if follow_up_future:
                     try:
@@ -925,6 +939,22 @@ async def send_message_to_project_v2(
                     finally:
                         if followup_executor:
                             followup_executor.shutdown(wait=False)
+
+                # Save AI response WITH follow-up questions
+                response_dict = {
+                    "content": result.get("output", ""),
+                    "metadata": {
+                        "success": result.get("success", True),
+                        "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0,
+                        "follow_up_questions": follow_up_questions
+                    }
+                }
+                execution_id = await WorkflowDatabase.save_response_to_project(
+                    project_id,
+                    response_dict,
+                    workflow_id
+                )
+                logger.info(f"[V2] Saved AI response with {len(follow_up_questions)} follow-up questions, execution_id: {execution_id}")
 
                 # Send completion notification via WebSocket
                 # Answer + follow-up questions delivered together for seamless UX
@@ -1080,12 +1110,17 @@ async def send_message_with_files_v2(
             if file_size == 0:
                 continue
 
-            # Size limits: 32MB for direct upload
-            max_size = 32 * 1024 * 1024
+            # Size limits based on file type
+            content_type = file.content_type or _guess_content_type(file.filename)
+            is_video = content_type.startswith("video/") if content_type else False
+            max_size = 100 * 1024 * 1024 if is_video else 32 * 1024 * 1024  # 100MB for video, 32MB for others
+
             if file_size > max_size:
+                max_mb = max_size // (1024 * 1024)
+                file_mb = file_size / (1024 * 1024)
                 raise HTTPException(
                     status_code=400,
-                    detail=f"File {file.filename} too large (>{max_size // (1024*1024)}MB). Use GCS upload for large files."
+                    detail=f"File '{file.filename}' is too large ({file_mb:.1f}MB). Maximum size for {'video' if is_video else 'this file type'} is {max_mb}MB."
                 )
 
             # Save file to sandbox uploads directory with unique name
@@ -1111,6 +1146,16 @@ async def send_message_with_files_v2(
 
     if len(attached_files_info) > 5:
         raise HTTPException(status_code=400, detail="Maximum 5 files per message")
+
+    # Check total size of video files (max 200MB combined, up to 5 videos at 100MB each)
+    MAX_TOTAL_VIDEO_SIZE = 200 * 1024 * 1024  # 200MB
+    video_files = [f for f in attached_files_info if f.get("content_type", "").startswith("video/")]
+    total_video_size = sum(f.get("size", 0) for f in video_files)
+    if total_video_size > MAX_TOTAL_VIDEO_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Total video size too large: {total_video_size / (1024*1024):.1f}MB. Maximum: {MAX_TOTAL_VIDEO_SIZE // (1024*1024)}MB combined (up to 5 videos, 100MB each)."
+        )
 
     logger.info(f"[V2] Total {len(attached_files_info)} files attached (sandbox storage)")
 

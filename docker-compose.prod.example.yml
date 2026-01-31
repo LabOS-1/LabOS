@@ -1,14 +1,18 @@
 # ==========================================
-# LabOS - Production Environment Override (Example)
+# LabOS - Production Environment (Example)
 # ==========================================
-# Copy to docker-compose.prod.yml and fill in your values
+# Copy to docker-compose.prod.yml and replace your-domain.com
 # Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Domain: your-domain.com (Nginx reverse proxy + SSL on VM)
+# Frontend: https://your-domain.com
+# Backend:  https://your-domain.com (proxied)
 # ==========================================
 
 services:
   backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       # Core settings
       - ENVIRONMENT=production
@@ -34,25 +38,10 @@ services:
       dockerfile: Dockerfile
       args:
         # Build-time args for Next.js (embedded at build)
-        # Backend: internal Docker network (server-side requests)
-        # WebSocket: public domain with wss:// (browser-side)
+        # Backend: internal Docker network (container-to-container)
+        # WebSocket: public domain with wss:// (browser connection)
         NEXT_PUBLIC_BACKEND_URL: http://backend:18800
         NEXT_PUBLIC_WEBSOCKET_URL: wss://your-domain.com/ws
     environment:
       - NODE_ENV=production
       - AUTH0_BASE_URL=https://your-domain.com
-
-  # Optional: Cloud SQL Proxy as a service
-  # Uncomment if you want to run Cloud SQL Proxy in Docker
-  # cloud-sql-proxy:
-  #   image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.0
-  #   container_name: labos-cloudsql-proxy
-  #   command:
-  #     - "--address=0.0.0.0"
-  #     - "--port=5432"
-  #     - "YOUR_PROJECT:YOUR_REGION:YOUR_INSTANCE"
-  #   ports:
-  #     - "5432:5432"
-  #   networks:
-  #     - labos-network
-  #   restart: unless-stopped
