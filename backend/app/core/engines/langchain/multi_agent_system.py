@@ -904,10 +904,10 @@ class MultiAgentSystem:
         ai_response: str
     ) -> List[str]:
         """
-        Generate follow-up questions using structured output (Pydantic schema).
+        Generate follow-up questions using Google Gemini SDK directly.
 
-        Uses LangChain's with_structured_output for reliable JSON parsing.
-        System prompt is loaded from follow_up_agent.yaml.
+        Uses native JSON structured output (response_mime_type + response_schema)
+        which is more reliable than LangChain's with_structured_output wrapper.
 
         Args:
             user_query: The original user question
@@ -916,27 +916,15 @@ class MultiAgentSystem:
         Returns:
             List of follow-up question strings (3-5 questions)
         """
-        from pydantic import BaseModel, Field
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.messages import SystemMessage, HumanMessage
+        from google import genai
+        from google.genai import types
         import os
-
-        # Define Pydantic schema for structured output
-        # NOTE: Don't use min_length/max_length constraints - they cause validation
-        # failures if model returns different count, resulting in None response
-        class FollowUpQuestions(BaseModel):
-            """Schema for follow-up questions output"""
-            follow_up_questions: List[str] = Field(
-                default_factory=list,
-                description="List of follow-up questions"
-            )
+        import json
 
         try:
             # Load system prompt from YAML
             system_prompt = load_langchain_agent_prompt("follow_up_agent")
 
-            # Create a lightweight model for fast generation
-            # Default to gemini-2.5-flash which supports structured output well
             flash_model = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
             api_key = os.getenv("GOOGLE_API_KEY")
 
@@ -944,48 +932,56 @@ class MultiAgentSystem:
                 print("⚠️ GOOGLE_API_KEY not set, skipping follow-up questions")
                 return []
 
-            llm = ChatGoogleGenerativeAI(
+            # Create client
+            client = genai.Client(api_key=api_key)
+
+            # Define JSON schema for structured output
+            response_schema = {
+                "type": "object",
+                "properties": {
+                    "follow_up_questions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of 3-5 follow-up questions"
+                    }
+                },
+                "required": ["follow_up_questions"]
+            }
+
+            print(f"⚡ Generating follow-up questions via Gemini SDK ({flash_model})...")
+
+            # Build prompt with system instruction
+            prompt = f"""{system_prompt}
+
+User Query: {user_query}
+
+AI Response: {ai_response[:1500]}"""
+
+            # Generate with native JSON mode
+            response = client.models.generate_content(
                 model=flash_model,
-                google_api_key=api_key,
-                temperature=0.3,
-                max_output_tokens=512,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                    temperature=0.5,
+                    max_output_tokens=1024,
+                )
             )
 
-            # Use structured output with json_schema method (Gemini native controlled generation)
-            # This uses response_mime_type="application/json" + response_json_schema
-            # More reliable than function_calling as it constrains output at generation time
-            structured_llm = llm.with_structured_output(
-                FollowUpQuestions,
-                method="json_schema"
-            )
+            # Parse response
+            result = json.loads(response.text)
+            questions = result.get("follow_up_questions", [])
 
-            # Build messages with system prompt from YAML
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"User Query: {user_query}\n\nAI Response: {ai_response[:1500]}")
-            ]
+            # Filter out incomplete questions
+            questions = [q for q in questions if q.strip().endswith('?')]
 
-            print(f"⚡ Generating follow-up questions with structured output ({flash_model})...")
-
-            # Invoke with structured output - returns Pydantic object directly
-            # Retry up to 2 times if result is None
-            result = None
-            for attempt in range(2):
-                try:
-                    result = structured_llm.invoke(messages)
-                    if result is not None:
-                        break
-                    print(f"⚠️ Attempt {attempt + 1}: Structured output returned None, retrying...")
-                except Exception as retry_err:
-                    print(f"⚠️ Attempt {attempt + 1} failed: {retry_err}")
-
-            # Handle None result after retries
-            if result is None:
-                print(f"⚠️ Structured output failed after retries (Model: {flash_model})")
+            if not questions:
+                print(f"⚠️ No valid questions in response")
+                print(f"📝 Raw response: {response.text[:300]}...")
                 return []
 
-            questions = result.follow_up_questions
-            print(f"✅ Generated {len(questions)} follow-up questions via structured output")
+            print(f"✅ Generated {len(questions)} follow-up questions via Gemini SDK")
             print(f"📝 Questions: {questions}")
 
             return questions[:5]

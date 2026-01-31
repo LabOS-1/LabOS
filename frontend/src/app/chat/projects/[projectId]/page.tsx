@@ -71,6 +71,7 @@ const ProjectChatPage: React.FC = () => {
     mode,
     sendMessage,
     sendMessageWithFiles,
+    sendDemoVideo,
     stopProcessing,
     setMode,
     projectExists
@@ -190,11 +191,12 @@ const ProjectChatPage: React.FC = () => {
           </Paper>
 
           {/* Messages List Component */}
-          <ProjectMessageList 
+          <ProjectMessageList
             messages={messages}
             isLoading={chatLoading}
             projectName={project?.name}
             onExampleClick={sendMessage}
+            onVideoAnalyze={(example) => sendDemoVideo(example.videoUrl, example.prompt || 'Analyze this video')}
           />
 
           {/* Input Component */}

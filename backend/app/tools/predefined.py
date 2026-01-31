@@ -929,17 +929,39 @@ def query_arxiv(query: str, max_papers: int = 10) -> str:
 
     Args:
         query: The search query string
-        max_papers: The maximum number of papers to retrieve (default: 10)
+        max_papers: The maximum number of papers to retrieve (default: 10, max: 50)
 
     Returns:
         The formatted search results or an error message
     """
     import arxiv
+    from itertools import islice
 
     try:
-        client = arxiv.Client()
-        search = arxiv.Search(query=query, max_results=max_papers, sort_by=arxiv.SortCriterion.Relevance)
-        results = "\n\n".join([f"Title: {paper.title}\nSummary: {paper.summary}" for paper in client.results(search)])
+        # Limit max_papers to prevent excessive API calls
+        max_papers = min(max_papers, 50)
+
+        # Configure client with page_size equal to max_papers to fetch only ONE page
+        # This prevents the library from fetching all 500k+ results
+        client = arxiv.Client(
+            page_size=max_papers,  # Only fetch what we need
+            delay_seconds=3.0,
+            num_retries=3
+        )
+
+        search = arxiv.Search(
+            query=query,
+            max_results=max_papers,
+            sort_by=arxiv.SortCriterion.Relevance
+        )
+
+        # Use islice to absolutely ensure we don't iterate beyond max_papers
+        # This is a safety net in case the library still tries to fetch more
+        papers = []
+        for paper in islice(client.results(search), max_papers):
+            papers.append(f"Title: {paper.title}\nSummary: {paper.summary}")
+
+        results = "\n\n".join(papers)
         return results if results else "No papers found on arXiv."
     except Exception as e:
         return f"Error querying arXiv: {e}"

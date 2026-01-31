@@ -31,6 +31,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { formatTime } from '@/utils/dateFormat';
+import VideoExampleCard, { VideoExample } from './VideoExampleCard';
 
 // Dynamically import ReactMarkdown to avoid SSR issues
 const Markdown = dynamic(() => import('react-markdown'), {
@@ -51,7 +52,28 @@ interface ProjectMessageListProps {
   isLoading?: boolean;
   projectName?: string;
   onExampleClick?: (message: string) => void;
+  onVideoAnalyze?: (example: VideoExample) => void;
 }
+
+// Video demo examples - AR glasses recordings
+const videoExamples: VideoExample[] = [
+  {
+    id: 'demo1',
+    title: 'AR Glasses Lab Recording',
+    description: 'Analyze first-person lab footage captured with AR glasses',
+    videoUrl: '/demos/demo1.mp4',
+    thumbnailUrl: '/demos/demo1_thumb.jpg',
+    prompt: 'Analyze this AR glasses recording from a lab environment. Describe what you see, identify any objects, equipment, or activities, and provide insights about the scene.',
+  },
+  {
+    id: 'demo2',
+    title: 'AR Glasses Experiment',
+    description: 'Process AR glasses video for experiment analysis and documentation',
+    videoUrl: '/demos/demo2.mp4',
+    thumbnailUrl: '/demos/demo2_thumb.jpg',
+    prompt: 'Analyze this AR glasses video. Describe the scene, identify any notable events or movements, and provide a summary of the content.',
+  },
+];
 
 // Reference interface
 interface Reference {
@@ -98,7 +120,8 @@ const ProjectMessageList: React.FC<ProjectMessageListProps> = ({
   messages,
   isLoading = false,
   projectName,
-  onExampleClick
+  onExampleClick,
+  onVideoAnalyze
 }) => {
   const muiTheme = useTheme();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -200,24 +223,59 @@ const ProjectMessageList: React.FC<ProjectMessageListProps> = ({
             {/* Attached Files Display */}
             {attachedFiles.length > 0 && (
               <Stack direction="column" spacing={1} sx={{ mb: 1 }}>
-                {attachedFiles.map((file: any, index: number) => (
-                  <Box key={index} sx={{ display: 'flex' }}>
-                    <Chip
-                      icon={<FileIcon sx={{ fontSize: 16 }} />}
-                      label={`${file.filename} (${file.size >= 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)}MB` : `${Math.round(file.size / 1024)}KB`})`}
-                      variant="outlined"
-                      size="small"
-                      sx={{
-                        color: 'inherit',
-                        borderColor: isUser ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.12)',
-                        bgcolor: isUser ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.05)',
-                        '& .MuiChip-icon': { color: 'inherit' },
-                        maxWidth: '100%',
-                        height: 28
-                      }}
-                    />
-                  </Box>
-                ))}
+                {attachedFiles.map((file: any, index: number) => {
+                  // Check if it's a video with a preview URL
+                  const isVideo = file.type?.startsWith('video/') || file.filename?.endsWith('.mp4');
+                  const hasPreview = isVideo && file.previewUrl;
+
+                  if (hasPreview) {
+                    // Show video player for videos with preview URL
+                    return (
+                      <Box key={index} sx={{ maxWidth: 320, borderRadius: 1, overflow: 'hidden' }}>
+                        <video
+                          src={file.previewUrl}
+                          controls
+                          style={{
+                            width: '100%',
+                            maxHeight: 200,
+                            borderRadius: 8,
+                            backgroundColor: '#000'
+                          }}
+                        />
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            display: 'block',
+                            mt: 0.5,
+                            color: isUser ? 'rgba(255,255,255,0.7)' : 'text.secondary'
+                          }}
+                        >
+                          {file.filename} ({(file.size / (1024 * 1024)).toFixed(1)}MB)
+                        </Typography>
+                      </Box>
+                    );
+                  }
+
+                  // Show chip for other files
+                  return (
+                    <Box key={index} sx={{ display: 'flex' }}>
+                      <Chip
+                        icon={<FileIcon sx={{ fontSize: 16 }} />}
+                        label={`${file.filename} (${file.size >= 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(1)}MB` : `${Math.round(file.size / 1024)}KB`})`}
+                        variant="outlined"
+                        size="small"
+                        sx={{
+                          color: 'inherit',
+                          borderColor: isUser ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.12)',
+                          bgcolor: isUser ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.05)',
+                          '& .MuiChip-icon': { color: 'inherit' },
+                          maxWidth: '100%',
+                          height: 28
+                        }}
+                      />
+                    </Box>
+                  );
+                })}
               </Stack>
             )}
 
@@ -548,64 +606,59 @@ const ProjectMessageList: React.FC<ProjectMessageListProps> = ({
             Welcome to {projectName || 'Your Project'}
           </Typography>
           <Typography variant="body2" sx={{ color: muiTheme.palette.text.secondary, mb: 4 }}>
-            Start chatting with LabOS AI or try one of these examples
+            Start chatting with LabOS AI or try analyzing a demo video
           </Typography>
 
-          {/* Example Prompts */}
-          <Stack 
-            direction={{ xs: 'column', sm: 'row' }} 
-            spacing={2} 
+          {/* Video Demo Examples */}
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={3}
             justifyContent="center"
-            sx={{ mt: 3, maxWidth: 900, mx: 'auto' }}
+            sx={{ mt: 3, maxWidth: 700, mx: 'auto', px: 2 }}
+          >
+            {videoExamples.map((example) => (
+              <VideoExampleCard
+                key={example.id}
+                example={example}
+                onAnalyze={(ex) => onVideoAnalyze?.(ex)}
+                disabled={!onVideoAnalyze || isLoading}
+              />
+            ))}
+          </Stack>
+
+          {/* Text Example Prompts (smaller, below videos) */}
+          <Typography
+            variant="body2"
+            sx={{
+              color: muiTheme.palette.text.secondary,
+              mt: 5,
+              mb: 2,
+              fontSize: '0.85rem'
+            }}
+          >
+            Or try a text prompt:
+          </Typography>
+          <Stack
+            direction="row"
+            spacing={1}
+            justifyContent="center"
+            flexWrap="wrap"
+            sx={{ maxWidth: 600, mx: 'auto', gap: 1 }}
           >
             {examplePrompts.map((example, index) => (
-              <Paper
+              <Chip
                 key={index}
-                elevation={0}
+                label={example.title}
+                onClick={() => onExampleClick?.(example.prompt)}
                 sx={{
-                  p: 2.5,
-                  flex: 1,
                   cursor: onExampleClick ? 'pointer' : 'default',
-                  border: `1px solid ${muiTheme.palette.divider}`,
-                  borderRadius: 2,
-                  transition: 'all 0.2s',
                   '&:hover': onExampleClick ? {
-                    borderColor: muiTheme.palette.primary.main,
-                    transform: 'translateY(-2px)',
-                    boxShadow: muiTheme.shadows[4]
+                    bgcolor: muiTheme.palette.primary.main,
+                    color: 'white',
                   } : {}
                 }}
-                onClick={() => onExampleClick?.(example.prompt)}
-              >
-                <Box sx={{ 
-                  color: muiTheme.palette.primary.main, 
-                  mb: 1.5,
-                  display: 'flex',
-                  justifyContent: 'center'
-                }}>
-                  {example.icon}
-                </Box>
-                <Typography 
-                  variant="subtitle2" 
-                  sx={{ 
-                    fontWeight: 'bold', 
-                    mb: 1,
-                    color: muiTheme.palette.text.primary
-                  }}
-                >
-                  {example.title}
-                </Typography>
-                <Typography 
-                  variant="body2" 
-                  sx={{ 
-                    color: muiTheme.palette.text.secondary,
-                    fontSize: '0.85rem',
-                    lineHeight: 1.5
-                  }}
-                >
-                  {example.prompt}
-                </Typography>
-              </Paper>
+                variant="outlined"
+              />
             ))}
           </Stack>
         </Box>

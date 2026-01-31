@@ -251,7 +251,12 @@ export const useProjectChat = (projectId: string) => {
 
   // Send message with multiple files to project
   // Uses existing single-file API, sends first file with message, rest are uploaded separately
-  const sendMessageWithFiles = useCallback(async (messageContent: string, files: File[]) => {
+  // Optional previewUrls can be provided for files that have accessible URLs (like demo videos)
+  const sendMessageWithFiles = useCallback(async (
+    messageContent: string,
+    files: File[],
+    options?: { previewUrls?: string[] }
+  ) => {
     // Enter SENDING state to protect message from being cleared
     console.log(`📎 Entering SENDING state for ${files.length} file(s)`);
     setMessageState(MessageState.SENDING);
@@ -263,10 +268,11 @@ export const useProjectChat = (projectId: string) => {
       content: messageContent,
       timestamp: new Date().toISOString(),
       metadata: {
-        attached_files: files.map(file => ({
+        attached_files: files.map((file, index) => ({
           filename: file.name,
           size: file.size,
-          type: file.type
+          type: file.type,
+          previewUrl: options?.previewUrls?.[index] // Store preview URL for videos
         }))
       }
     };
@@ -373,6 +379,40 @@ export const useProjectChat = (projectId: string) => {
       isSendingRef.current = false;
     }
   }, [dispatch, projectId, mode]);
+
+  // Send a demo video for analysis
+  // Fetches the video from public URL and sends it with a prompt
+  // Stores the original URL so the video can be previewed after sending
+  const sendDemoVideo = useCallback(async (videoUrl: string, prompt: string) => {
+    try {
+      console.log(`📹 Fetching demo video from: ${videoUrl}`);
+
+      // Fetch the video file from public URL
+      const response = await fetch(videoUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch video: ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+
+      // Extract filename from URL
+      const filename = videoUrl.split('/').pop() || 'demo_video.mp4';
+
+      // Create a File object from the blob
+      const videoFile = new File([blob], filename, { type: 'video/mp4' });
+
+      console.log(`📹 Demo video loaded: ${filename} (${(videoFile.size / (1024 * 1024)).toFixed(1)}MB)`);
+
+      // Send the video with the prompt, including the preview URL so users can watch it later
+      await sendMessageWithFiles(prompt, [videoFile], { previewUrls: [videoUrl] });
+
+    } catch (error) {
+      console.error('Error sending demo video:', error);
+      dispatch(setIsLoading(false));
+      setMessageState(MessageState.IDLE);
+      isSendingRef.current = false;
+    }
+  }, [sendMessageWithFiles, dispatch]);
 
   // Load project workflow history
   const loadProjectWorkflows = useCallback(async (projectId: string, headers: Record<string, string>) => {
@@ -627,6 +667,7 @@ export const useProjectChat = (projectId: string) => {
     // Actions
     sendMessage,
     sendMessageWithFiles,
+    sendDemoVideo,
     stopProcessing,
     loadProjectData,
     setMode,
