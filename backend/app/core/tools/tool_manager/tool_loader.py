@@ -45,7 +45,7 @@ def retry_on_failure(max_retries=3, delay=1.0):
 
 @tool
 def load_project_tools() -> str:
-    """Load all tools created for the current project from database.
+    """Load all tools created for the current project from sandbox filesystem.
 
     This function retrieves all tools that were previously created for this project
     and loads them into the agents so they can be used.
@@ -54,86 +54,50 @@ def load_project_tools() -> str:
         Summary of loaded tools
     """
     try:
-        from app.services.tool_storage_service import tool_storage_service
         from app.services.workflows import get_workflow_context
+        from app.services.sandbox import get_sandbox_manager
 
         context = get_workflow_context()
         if not context or not context.metadata.get('project_id'):
-            return "❌ No project context available. This function only works within a project."
+            return "No project context available. This function only works within a project."
 
         project_id = context.metadata['project_id']
         user_id = context.metadata.get('user_id', 'system')
 
-        # Get tools from database using SYNC method
-        from uuid import UUID
-        from sqlalchemy import select
-        from app.models.database.tool import ProjectTool, ToolStatus
+        sandbox = get_sandbox_manager()
+        tool_entries = sandbox.list_tools(user_id, project_id, status="active")
 
-        # Use sync session
-        session = None
-        try:
-            session = tool_storage_service._get_sync_session()
-            query = select(ProjectTool).where(
-                ProjectTool.project_id == UUID(project_id),
-                ProjectTool.user_id == user_id,
-                ProjectTool.status == ToolStatus.ACTIVE
-            ).order_by(ProjectTool.created_at.desc())
+        if not tool_entries:
+            return f"No tools found for this project (ID: {project_id})"
 
-            result = session.execute(query)
-            tools = list(result.scalars().all())
-        finally:
-            if session:
-                session.close()
+        # Load each tool directly from sandbox tools/ directory
+        project_dir = sandbox.get_project_sandbox(user_id, project_id)
+        tools_dir = project_dir / sandbox.TOOLS_DIR
 
-        if not tools:
-            return f"📦 No tools found for this project (ID: {project_id})"
-
-        # Get workflow temp directory - tools will be auto-cleaned when workflow ends
-        workflow_tmp_dir = context.metadata.get('workflow_tmp_dir')
-        if not workflow_tmp_dir:
-            workflow_id = context.workflow_id
-            workflow_tmp_dir = f'/tmp/labos_workflow_{workflow_id}'
-            os.makedirs(workflow_tmp_dir, exist_ok=True)
-
-        # Create tools subdirectory
-        tools_dir = os.path.join(workflow_tmp_dir, 'tools')
-        os.makedirs(tools_dir, exist_ok=True)
-
-        # Create __init__.py
-        init_file = os.path.join(tools_dir, '__init__.py')
-        if not os.path.exists(init_file):
-            with open(init_file, 'w') as f:
-                f.write('# Temporary workflow tools\n')
-
-        # Load each tool
         loaded_count = 0
         failed_tools = []
 
-        for tool in tools:
+        for entry in tool_entries:
+            tool_name = entry["name"]
             try:
-                # Write tool to workflow temp directory
-                tool_file_path = os.path.join(tools_dir, f'{tool.name}.py')
-                with open(tool_file_path, 'w') as f:
-                    f.write(tool.tool_code)
+                tool_file_path = str(tools_dir / entry["filename"])
 
-                # Load the module dynamically
-                import importlib.util
-                import sys
-                import inspect
+                if not os.path.exists(tool_file_path):
+                    failed_tools.append(f"{tool_name}: File not found")
+                    continue
 
-                spec = importlib.util.spec_from_file_location(tool.name, tool_file_path)
+                spec = importlib.util.spec_from_file_location(tool_name, tool_file_path)
                 if spec is None or spec.loader is None:
-                    failed_tools.append(f"{tool.name}: Could not create module spec")
+                    failed_tools.append(f"{tool_name}: Could not create module spec")
                     continue
 
                 module = importlib.util.module_from_spec(spec)
-                sys.modules[tool.name] = module
+                sys.modules[tool_name] = module
                 spec.loader.exec_module(module)
 
-                # Find and add tool functions to agents
-                from .. import labos_engine
-                manager_agent = labos_engine.manager_agent
-                dev_agent = labos_engine.dev_agent
+                # Find @tool decorated functions and inject into agents
+                from app.core.engines.langchain.multi_agent_system import get_multi_agent_system
+                system = get_multi_agent_system()
 
                 tool_functions = []
                 for name, obj in inspect.getmembers(module):
@@ -144,37 +108,36 @@ def load_project_tools() -> str:
                     if is_tool:
                         tool_functions.append((name, obj))
 
-                if tool_functions:
+                if tool_functions and system:
                     for func_name, tool_func in tool_functions:
-                        if func_name not in manager_agent.tools:
-                            manager_agent.tools[func_name] = tool_func
-                        if func_name not in dev_agent.tools:
-                            dev_agent.tools[func_name] = tool_func
+                        for agent_name in ['dev_agent', 'tool_creation_agent']:
+                            agent = system.agents.get(agent_name)
+                            if agent and func_name not in agent.tools:
+                                agent.tools[func_name] = tool_func
                     loaded_count += 1
-                    print(f"✅ Loaded tool from database: {tool.name}")
                 else:
-                    failed_tools.append(f"{tool.name}: No @tool decorated functions found")
+                    failed_tools.append(f"{tool_name}: No @tool decorated functions found")
 
             except Exception as e:
-                failed_tools.append(f"{tool.name}: {str(e)}")
+                failed_tools.append(f"{tool_name}: {str(e)}")
 
         # Generate summary
-        summary = f"🔧 Loaded {loaded_count}/{len(tools)} tools from database\n"
+        summary = f"Loaded {loaded_count}/{len(tool_entries)} tools from sandbox\n"
 
         if loaded_count > 0:
-            summary += f"✅ Successfully loaded: {loaded_count} tools\n"
+            summary += f"Successfully loaded: {loaded_count} tools\n"
 
         if failed_tools:
-            summary += f"\n❌ Failed to load ({len(failed_tools)}):\n"
-            for failure in failed_tools[:5]:  # Show first 5 failures
-                summary += f"  • {failure}\n"
+            summary += f"\nFailed to load ({len(failed_tools)}):\n"
+            for failure in failed_tools[:5]:
+                summary += f"  - {failure}\n"
             if len(failed_tools) > 5:
                 summary += f"  ... and {len(failed_tools) - 5} more\n"
 
         return summary
 
     except Exception as e:
-        return f"❌ Error loading project tools: {str(e)}"
+        return f"Error loading project tools: {str(e)}"
 
 
 @tool

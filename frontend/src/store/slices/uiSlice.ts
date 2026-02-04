@@ -4,8 +4,8 @@ import type { UIState, UITheme, UILayout, NotificationItem } from '../../types';
 const initialState: UIState = {
   theme: {
     mode: 'light',
-    primaryColor: '#0ea5e9',
-    accentColor: '#a855f7',
+    primaryColor: '#4f46e5',
+    accentColor: '#8b5cf6',
     animations: true,
   },
   layout: {

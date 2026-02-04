@@ -5,6 +5,7 @@ import { Drawer, List, Button, Typography, Badge, Space, Empty } from 'antd';
 import { CloseOutlined, CheckOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { markNotificationRead, removeNotification } from '@/store/slices/uiSlice';
+import { formatDateTime } from '@/utils/dateFormat';
 
 const { Title, Text } = Typography;
 
@@ -118,7 +119,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ visible, onClose 
                     {notification.message}
                   </Text>
                   <Text className="text-xs text-gray-400">
-                    {new Date(notification.timestamp).toLocaleString()}
+                    {formatDateTime(notification.timestamp)}
                   </Text>
                   {!notification.read && (
                     <Button

@@ -3,186 +3,123 @@ Tool Creator - Create New Specialized Tools
 
 This module handles the creation of new tools using the tool_creation_agent:
 - Generate tool code based on specifications
-- Save tools to database (not filesystem)
+- Save tools to sandbox filesystem as .py files
 - Auto-load tools into agents
 """
 
 from smolagents import tool
-import time
 from typing import Optional
-from .tool_registry import register_tool
 
 
 @tool
-def save_tool_to_database(
+def save_tool_to_sandbox(
     tool_name: str,
     tool_code: str,
     description: str,
     category: str = "custom"
 ) -> str:
-    """Save a dynamically created tool to the database.
+    """Save a dynamically created tool to the project sandbox as a .py file.
 
-    Use this function to persist tool code to the database instead of writing files.
+    Use this function to persist tool code as a file in the sandbox.
     This makes tools available across sessions and projects.
 
     Args:
-        tool_name: Name of the tool (e.g., "analyze_protein_structure")
+        tool_name: Name of the tool (e.g., "analyze_protein_structure"). Must be a valid Python identifier.
         tool_code: Complete Python code for the tool (must include @tool decorator)
         description: Description of what the tool does
         category: Tool category (data_processing, analysis, visualization, etc.)
 
     Returns:
-        Success message with tool ID, or error message
-
-    Example:
-        # Create tool code as a string
-        tool_code = \"\"\"
-        from smolagents import tool
-
-        @tool
-        def analyze_data(data: str) -> str:
-            '''Analyze the provided data.'''
-            return f"Analysis: {data}"
-        \"\"\"
-
-        # Save to database
-        result = save_tool_to_database(
-            tool_name="analyze_data",
-            tool_code=tool_code,
-            description="Analyzes data and returns insights",
-            category="data_processing"
-        )
+        Success message with tool name and path, or error message
     """
     try:
-        # Get workflow context
         from app.services.workflows import get_workflow_context
         context = get_workflow_context()
 
         if not context:
-            return "❌ Error: No workflow context available. Cannot determine project_id."
+            return "Error: No workflow context available. Cannot determine project_id."
 
         user_id = context.metadata.get('user_id')
         project_id = context.metadata.get('project_id')
-        workflow_id = context.workflow_id
 
         if not user_id or not project_id:
-            return "❌ Error: Missing user_id or project_id in workflow context"
+            return "Error: Missing user_id or project_id in workflow context"
 
-        # Import tool storage service
-        from app.services.tool_storage_service import tool_storage_service
-        from app.models.schemas.tool import ToolCreate
-        from uuid import UUID
-
-        # Create tool data with minimal required fields
-        tool_data = ToolCreate(
-            name=tool_name,
+        # Save to sandbox filesystem
+        from app.services.sandbox import get_sandbox_manager
+        sandbox = get_sandbox_manager()
+        result = sandbox.save_tool_file(
+            user_id=user_id,
+            project_id=project_id,
+            tool_name=tool_name,
+            tool_code=tool_code,
             description=description,
             category=category,
-            tool_code=tool_code,
-            project_id=UUID(project_id),
-            workflow_id=workflow_id,
-            tool_metadata={
-                "created_via": "tool_creation_agent",
-                "auto_generated": True
-            }
-        )
-
-        # Save to database using SYNCHRONOUS method to avoid event loop conflicts
-        # This directly uses psycopg2 and works with uvloop without issues
-        tool = tool_storage_service.create_tool_sync(
-            tool_data=tool_data,
-            user_id=user_id,
-            created_by_agent="tool_creation_agent"
+            metadata={"created_via": "tool_creation_agent", "auto_generated": True}
         )
 
         # Emit observation event
         from app.services.workflows import emit_observation_event
         emit_observation_event(
-            f"💾 Saved tool '{tool_name}' to database (ID: {tool.id})",
-            tool_name="save_tool_to_database"
+            f"Saved tool '{tool_name}' to sandbox ({result['relative_path']})",
+            tool_name="save_tool_to_sandbox"
         )
 
-        # Auto-load the tool into agents so it's immediately usable
-        # Use workflow-scoped temporary directory - will be cleaned up when workflow ends
+        # Auto-load the tool into current agents so it's immediately usable
         try:
-            import os
-
-            # Get workflow temp directory from context
-            # This directory is automatically cleaned up when workflow completes
-            workflow_tmp_dir = context.metadata.get('workflow_tmp_dir')
-            if not workflow_tmp_dir:
-                workflow_tmp_dir = f'/tmp/labos_workflow_{workflow_id}'
-                os.makedirs(workflow_tmp_dir, exist_ok=True)
-
-            # Create tools subdirectory in workflow temp
-            tools_dir = os.path.join(workflow_tmp_dir, 'tools')
-            os.makedirs(tools_dir, exist_ok=True)
-
-            # Create __init__.py to make it a package
-            init_file = os.path.join(tools_dir, '__init__.py')
-            if not os.path.exists(init_file):
-                with open(init_file, 'w') as f:
-                    f.write('# Temporary workflow tools\n')
-
-            # Write tool code to workflow-specific temporary directory
-            tool_file_path = os.path.join(tools_dir, f'{tool_name}.py')
-            with open(tool_file_path, 'w') as f:
-                f.write(tool_code)
-
-            # Load the tool dynamically
             import importlib.util
             import sys
             import inspect
 
-            # Load the module
+            tool_file_path = result['local_path']
             spec = importlib.util.spec_from_file_location(tool_name, tool_file_path)
             if spec is None or spec.loader is None:
-                return f"✅ Tool '{tool_name}' saved to database (ID: {tool.id})\n\n⚠️ Could not load module. Run load_project_tools() to retry."
+                return f"Tool '{tool_name}' saved to sandbox.\n\nCould not auto-load module. Run load_project_tools() to retry."
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[tool_name] = module
             spec.loader.exec_module(module)
 
-            # Find tool functions and add to agents
-            from .. import labos_engine
-            manager_agent = labos_engine.manager_agent
-            dev_agent = labos_engine.dev_agent
-
-            tool_functions = []
+            # Find @tool decorated functions (smolagents format)
+            smolagent_tools = []
             for name, obj in inspect.getmembers(module):
                 is_tool = (
                     (inspect.isfunction(obj) and hasattr(obj, '__smolagents_tool__')) or
                     (type(obj).__name__ == 'SimpleTool' and callable(obj))
                 )
                 if is_tool:
-                    tool_functions.append((name, obj))
+                    smolagent_tools.append(obj)
 
-            if not tool_functions:
-                return f"✅ Tool '{tool_name}' saved to database (ID: {tool.id})\n\n⚠️ No @tool decorated functions found. Run load_project_tools() to retry."
+            # Get the active running system (not a fresh instance)
+            from app.core.engines.langchain.multi_agent_system import get_active_multi_agent_system
+            system = get_active_multi_agent_system()
 
-            # Add to agents
-            for func_name, tool_func in tool_functions:
-                if func_name not in manager_agent.tools:
-                    manager_agent.tools[func_name] = tool_func
-                if func_name not in dev_agent.tools:
-                    dev_agent.tools[func_name] = tool_func
+            if smolagent_tools and system:
+                # Convert smolagents tools to LangChain format for the running system
+                from app.core.engines.smolagents.tool_adapter import batch_convert_tools
+                langchain_tools = batch_convert_tools(smolagent_tools)
 
-            emit_observation_event(
-                f"🔧 Tool '{tool_name}' loaded into agents (workflow-scoped)",
-                tool_name="save_tool_to_database"
-            )
+                for lc_tool in langchain_tools:
+                    for agent_name in ['dev_agent', 'tool_creation_agent']:
+                        agent = system.agents.get(agent_name)
+                        if agent and hasattr(agent, 'add_tool'):
+                            if lc_tool.name not in agent.tool_map:
+                                agent.add_tool(lc_tool)
 
-            return f"✅ Tool '{tool_name}' created successfully!\n\nTool ID: {tool.id}\nProject ID: {project_id}\n\n🎯 The tool is immediately available for use in this workflow.\n💾 Saved to database - will auto-load in future workflows via load_project_tools().\n🗑️  Temporary files will be cleaned up when workflow ends."
+                emit_observation_event(
+                    f"Tool '{tool_name}' loaded into agents",
+                    tool_name="save_tool_to_sandbox"
+                )
+
+            return f"Tool '{tool_name}' created successfully!\n\nPath: {result['relative_path']}\n\nThe tool is immediately available for use in this workflow.\nSaved to sandbox - will auto-load in future workflows via load_project_tools()."
 
         except Exception as load_error:
-            import traceback
-            error_details = traceback.format_exc()
-            return f"✅ Tool '{tool_name}' saved to database (ID: {tool.id})\n\n⚠️ Auto-loading error:\n{str(load_error)}\n\nRun load_project_tools() to load the tool manually."
+            return f"Tool '{tool_name}' saved to sandbox ({result['relative_path']}).\n\nAuto-loading warning: {str(load_error)}\n\nRun load_project_tools() to load the tool manually."
 
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        return f"❌ Error saving tool to database:\n{str(e)}\n\nDetails:\n{error_details}"
+        return f"Error saving tool to sandbox:\n{str(e)}\n\nDetails:\n{error_details}"
 
 
 @tool
@@ -213,58 +150,43 @@ TECHNICAL REQUIREMENTS: {technical_requirements}
 
 Requirements:
 1. Write the complete Python tool code as a string variable
-2. The tool MUST be implemented as a function decorated with @tool from smolagents
+2. The tool MUST use @tool decorator from langchain_core.tools
 3. Include proper docstrings with Args and Returns sections
 4. Add error handling and input validation
 5. Import all necessary dependencies at the top
 6. Include type hints for all function parameters and returns
-7. After writing the code, call save_tool_to_database() to save it
+7. Call save_tool_to_sandbox() to save it
 
-🚨 CRITICAL DOCSTRING REQUIREMENTS 🚨
-- EVERY parameter MUST be documented in the Args section (including optional params with defaults)
-- Missing parameter descriptions will cause auto-load to FAIL
-- Use Google-style docstrings with complete Args, Returns sections
+CRITICAL: EVERY parameter MUST be documented in the Args section.
 
 IMPORTANT:
 - DO NOT use open() or write files to disk
-- DO NOT try to create files in app/tools/ directory
-- Instead, generate the tool code as a string and call save_tool_to_database()
+- Generate the tool code as a string and call save_tool_to_sandbox()
 
-Example structure with COMPLETE docstring:
+Example:
 ```python
 tool_code = '''
-from smolagents import tool
-import pandas as pd
+from langchain_core.tools import tool
 
 @tool
-def {tool_name}(param1: str, param2: int = 10, mode: str = "default") -> str:
-    \"\"\"Brief one-line description of what the tool does.
-
-    Longer description with more details about the tool's purpose,
-    behavior, and use cases.
+def {tool_name}(param1: str, param2: int = 10) -> str:
+    \"\"\"Brief description of what the tool does.
 
     Args:
-        param1: Description of param1 (REQUIRED - be specific!)
-        param2: Description of param2 (REQUIRED even for optional params!)
-        mode: Operation mode - 'default' or 'verbose' (REQUIRED - document ALL params!)
+        param1: Description of param1
+        param2: Description of param2
 
     Returns:
-        Description of what the function returns
-
-    Raises:
-        ValueError: When invalid input is provided
+        Description of return value
     \"\"\"
     try:
         # Implementation here
-        if mode == "verbose":
-            print(f"Processing {{param1}} with param2={{param2}}")
         return "result"
     except Exception as e:
         return f"Error: {{e}}"
 '''
 
-# Save to database
-result = save_tool_to_database(
+result = save_tool_to_sandbox(
     tool_name="{tool_name}",
     tool_code=tool_code,
     description="{tool_purpose}",
@@ -272,8 +194,6 @@ result = save_tool_to_database(
 )
 print(result)
 ```
-
-The tool should be production-ready and will be saved to the database for immediate use.
 """
 
         result = tool_creation_agent.run(creation_task)

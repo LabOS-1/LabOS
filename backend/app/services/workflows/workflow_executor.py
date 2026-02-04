@@ -79,7 +79,7 @@ class WorkflowExecutor:
         # Create managed agents (dev, critic, tool_creation)
         # These are also created fresh to ensure complete isolation
         from app.core.engines.smolagents.agents import create_dev_agent, create_critic_agent, create_tool_creation_agent
-        from app.core.tools.tool_manager import save_tool_to_database
+        from app.core.tools.tool_manager import save_tool_to_sandbox
         from app.tools.core import save_agent_file
         from smolagents import WebSearchTool
         from app.tools.predefined import run_shell_command, visit_webpage
@@ -89,7 +89,7 @@ class WorkflowExecutor:
 
         # Create tool creation agent
         tool_creation_tools = [
-            save_tool_to_database,
+            save_tool_to_sandbox,
             save_agent_file,
             WebSearchTool(),
             visit_webpage,

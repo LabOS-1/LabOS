@@ -49,10 +49,18 @@ def get_database_url() -> str:
         )
 
     if environment == 'production':
-        # Production: Direct Cloud SQL connection via unix socket
         db_name = os.getenv('DB_NAME', 'labos_chat')
-        logger.info(f"🗄️  Using Cloud SQL (production): {db_name}")
-        return f"postgresql+asyncpg://{db_user}:{db_password}@/{db_name}?host=/cloudsql/{cloud_sql_connection_name}"
+        db_host = os.getenv('DB_HOST')  # If set, use TCP connection (for Docker)
+
+        if db_host:
+            # Docker/Container: Use TCP connection via Cloud SQL Proxy on host
+            db_port = os.getenv('DB_PORT', '5432')
+            logger.info(f"🗄️  Using Cloud SQL (production/TCP): {db_name} @ {db_host}:{db_port}")
+            return f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        else:
+            # Direct VM: Unix socket connection
+            logger.info(f"🗄️  Using Cloud SQL (production/socket): {db_name}")
+            return f"postgresql+asyncpg://{db_user}:{db_password}@/{db_name}?host=/cloudsql/{cloud_sql_connection_name}"
     else:
         # Development: Cloud SQL via proxy (TCP connection)
         db_name = os.getenv('DEV_DB_NAME', 'labos_chat_dev')

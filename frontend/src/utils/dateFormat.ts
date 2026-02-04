@@ -1,56 +1,89 @@
 /**
  * Date/Time formatting utilities
- * Ensures consistent timezone handling across the app
+ * Backend stores UTC time, frontend converts to local time for display
  */
 
 /**
- * Format timestamp to local time string
- * Always uses user's browser timezone
+ * Parse timestamp as UTC (backend always sends UTC)
+ * If no timezone info, treat as UTC
+ */
+function parseAsUTC(timestamp: string | Date): Date {
+  if (timestamp instanceof Date) return timestamp;
+
+  // If string doesn't have timezone info, append 'Z' to treat as UTC
+  if (timestamp && !timestamp.endsWith('Z') && !timestamp.includes('+') && !timestamp.includes('-', 10)) {
+    return new Date(timestamp + 'Z');
+  }
+  return new Date(timestamp);
+}
+
+/**
+ * Format timestamp to local time string (HH:mm)
+ * Uses 24-hour format for consistency
  */
 export function formatTime(timestamp: string | Date): string {
   if (!timestamp) return '';
 
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  const date = parseAsUTC(timestamp);
 
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
+  return date.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
     minute: '2-digit',
-    hour12: true
+    hour12: false
   });
 }
 
 /**
- * Format timestamp to local date and time
+ * Format timestamp to local time string with seconds (HH:mm:ss)
+ * Uses 24-hour format for consistency
+ */
+export function formatTimeWithSeconds(timestamp: string | Date): string {
+  if (!timestamp) return '';
+
+  const date = parseAsUTC(timestamp);
+
+  return date.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
+/**
+ * Format timestamp to local date and time (MMM D, HH:mm)
+ * Uses 24-hour format for consistency
  */
 export function formatDateTime(timestamp: string | Date): string {
   if (!timestamp) return '';
 
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  const date = parseAsUTC(timestamp);
 
-  return date.toLocaleString('en-US', {
+  return date.toLocaleString('en-GB', {
     month: 'short',
     day: 'numeric',
-    hour: 'numeric',
+    hour: '2-digit',
     minute: '2-digit',
-    hour12: true
+    hour12: false
   });
 }
 
 /**
- * Format timestamp to full date and time with year
+ * Format timestamp to full date and time with year (YYYY MMM D, HH:mm)
+ * Uses 24-hour format for consistency
  */
 export function formatFullDateTime(timestamp: string | Date): string {
   if (!timestamp) return '';
 
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  const date = parseAsUTC(timestamp);
 
-  return date.toLocaleString('en-US', {
+  return date.toLocaleString('en-GB', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
-    hour: 'numeric',
+    hour: '2-digit',
     minute: '2-digit',
-    hour12: true
+    hour12: false
   });
 }
 
@@ -60,7 +93,7 @@ export function formatFullDateTime(timestamp: string | Date): string {
 export function formatDate(timestamp: string | Date): string {
   if (!timestamp) return '';
 
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  const date = parseAsUTC(timestamp);
 
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
@@ -75,7 +108,7 @@ export function formatDate(timestamp: string | Date): string {
 export function formatRelativeTime(timestamp: string | Date): string {
   if (!timestamp) return '';
 
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  const date = parseAsUTC(timestamp);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);

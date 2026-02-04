@@ -22,13 +22,8 @@ from .tool_loader import (
     refresh_agent_tools,
     add_tool_to_agents
 )
-from .tool_creator import create_new_tool, save_tool_to_database
-from .tool_registry import (
-    list_dynamic_tools,
-    get_tool_signature,
-    dynamic_tools_registry,
-    register_tool
-)
+from .tool_creator import create_new_tool, save_tool_to_sandbox
+from .tool_registry import tool_registry, get_predefined_tools
 from .parallel_executor import execute_tools_in_parallel
 from .intelligent_selector import analyze_query_and_load_relevant_tools
 
@@ -41,13 +36,11 @@ __all__ = [
 
     # Tool Creator
     'create_new_tool',
-    'save_tool_to_database',
+    'save_tool_to_sandbox',
 
     # Tool Registry
-    'list_dynamic_tools',
-    'get_tool_signature',
-    'dynamic_tools_registry',
-    'register_tool',
+    'tool_registry',
+    'get_predefined_tools',
 
     # Parallel Executor
     'execute_tools_in_parallel',

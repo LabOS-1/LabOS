@@ -20,6 +20,13 @@ import json
 import yaml
 import base64
 import threading
+import contextvars
+
+# Context variable to track the active MultiAgentSystem during execution
+# This allows tools (e.g., save_tool_to_sandbox) to access the running system
+_active_system: contextvars.ContextVar[Optional['MultiAgentSystem']] = contextvars.ContextVar(
+    '_active_system', default=None
+)
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
@@ -411,6 +418,27 @@ class MultiAgentSystem:
 
             response = result.get("output", "")
 
+            # If max iterations was reached, extract useful info from completed steps
+            # so the manager knows what was actually accomplished
+            if result.get("error") == "max_iterations_reached":
+                steps = result.get("steps", [])
+                successful_tools = []
+                for step in steps:
+                    for tc in step.get("tool_calls", []):
+                        if tc.get("success") and tc.get("tool"):
+                            tool_result_str = str(tc.get("result", ""))[:300]
+                            successful_tools.append(f"- {tc['tool']}: {tool_result_str}")
+
+                if successful_tools:
+                    response = (
+                        f"Task partially completed ({len(successful_tools)} tool calls executed "
+                        f"but agent ran out of iterations before producing a final summary).\n\n"
+                        f"Completed actions:\n" + "\n".join(successful_tools)
+                    )
+
+                if self.verbose:
+                    print(f"⚠️ {agent_name} hit max_iterations, extracted {len(successful_tools)} tool results")
+
             # Add response to conversation
             self.conversation.add_message(
                 agent_name=agent_name,
@@ -528,6 +556,10 @@ class MultiAgentSystem:
         # Load LangChain-specific prompt from YAML
         system_prompt = load_langchain_agent_prompt("tool_creation_agent")
 
+        # Create thinking tool for tool_creation_agent
+        thinking_tool = self._create_strategic_planning_tool("tool_creation_agent")
+        all_tools = list(tools) + [thinking_tool]
+
         # Use provided model or create one
         if model is None:
             if llm_config is not None:
@@ -541,7 +573,7 @@ class MultiAgentSystem:
 
         agent = LangChainAgent(
             model=model,
-            tools=tools,
+            tools=all_tools,
             system_prompt=system_prompt,
             max_iterations=8,
             verbose=self.verbose
@@ -552,11 +584,11 @@ class MultiAgentSystem:
             name="tool_creation_agent",
             role="tool_creation",
             description="Creates and tests new tools dynamically",
-            tools_count=len(tools)
+            tools_count=len(all_tools)
         )
 
         if self.verbose:
-            print(f"✅ Registered tool_creation_agent with {len(tools)} tools")
+            print(f"✅ Registered tool_creation_agent with {len(all_tools)} tools (including output_thinking)")
 
         return agent
 
@@ -856,12 +888,17 @@ class MultiAgentSystem:
         # Prepare conversation history
         full_history = conversation_history or []
 
-        # Run manager agent
-        result = self.manager_agent.run(
-            query=query,
-            conversation_history=full_history,
-            callbacks=callbacks
-        )
+        # Set this system as the active one so tools can access it
+        token = _active_system.set(self)
+        try:
+            # Run manager agent
+            result = self.manager_agent.run(
+                query=query,
+                conversation_history=full_history,
+                callbacks=callbacks
+            )
+        finally:
+            _active_system.reset(token)
 
         # Add manager's response to conversation
         self.conversation.add_message(
@@ -1091,7 +1128,7 @@ def initialize_multi_agent_system(
     return system
 
 
-def create_workflow_multi_agent_system(verbose: bool = False) -> MultiAgentSystem:
+def create_workflow_multi_agent_system(verbose: bool = False, mode: Optional[str] = None) -> MultiAgentSystem:
     """
     Create a new MultiAgentSystem instance for a specific workflow (thread-safe).
 
@@ -1104,6 +1141,10 @@ def create_workflow_multi_agent_system(verbose: bool = False) -> MultiAgentSyste
     - Reads immutable MultiAgentConfig from _ConfigManager
     - Creates fresh agent instances (no state sharing)
     - Safe to call concurrently from multiple workflows
+
+    Args:
+        verbose: Enable verbose logging
+        mode: Override mode ("fast" or "deep"). If None, uses config mode.
 
     Returns:
         New MultiAgentSystem instance with fresh agents
@@ -1120,7 +1161,10 @@ def create_workflow_multi_agent_system(verbose: bool = False) -> MultiAgentSyste
             "Call initialize_multi_agent_system() first to set up tools."
         )
 
-    # Create a fresh system instance
+    # Use override mode if provided, otherwise use config mode
+    effective_mode = mode if mode is not None else config.mode
+
+    # Create a fresh system instance (mode is handled by _register_agents_to_system)
     system = MultiAgentSystem(verbose=verbose or config.verbose)
 
     # Register fresh agents with the configured tools
@@ -1129,12 +1173,12 @@ def create_workflow_multi_agent_system(verbose: bool = False) -> MultiAgentSyste
         system,
         list(config.base_tools),  # Convert immutable tuple to list
         list(config.manager_tools),
-        config.mode,
+        effective_mode,  # Use effective mode (override or config)
         verbose or config.verbose
     )
 
     if verbose or config.verbose:
-        print(f"✅ Created fresh Multi-Agent System instance for workflow (thread-safe)")
+        print(f"✅ Created fresh Multi-Agent System instance for workflow (mode={effective_mode})")
 
     return system
 
@@ -1226,24 +1270,43 @@ def _register_agents_to_system(
         print("="*80 + "\n")
 
 
+def get_active_multi_agent_system() -> Optional[MultiAgentSystem]:
+    """
+    Get the currently active MultiAgentSystem from the execution context.
+
+    This returns the actual running system instance (set via context variable
+    in MultiAgentSystem.run()), allowing tools like save_tool_to_sandbox
+    to load new tools into the live agents.
+
+    Returns:
+        The active MultiAgentSystem, or None if no system is currently running.
+    """
+    return _active_system.get(None)
+
+
 def get_multi_agent_system() -> Optional[MultiAgentSystem]:
     """
-    DEPRECATED: Do not use this for workflow execution.
+    DEPRECATED: Use get_active_multi_agent_system() instead.
 
-    Use create_workflow_multi_agent_system() instead to ensure user isolation.
-    This function only exists for backward compatibility.
+    Falls back to the active system context variable. If no active system,
+    returns a fresh instance (legacy behavior).
     """
+    # First try the active system (preferred)
+    active = get_active_multi_agent_system()
+    if active is not None:
+        return active
+
+    # Legacy fallback: create a fresh instance
     if not _config_manager.is_configured():
         return None
-
-    # Return a fresh instance instead of a global one
     return create_workflow_multi_agent_system()
 
 
 def run_multi_agent_query(
     query: str,
     conversation_history: Optional[List] = None,
-    callbacks: Optional[List[BaseCallbackHandler]] = None
+    callbacks: Optional[List[BaseCallbackHandler]] = None,
+    mode: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Run a query through the multi-agent system.
@@ -1255,12 +1318,14 @@ def run_multi_agent_query(
         query: User query
         conversation_history: Optional chat history
         callbacks: Optional callbacks
+        mode: Override mode ("fast" or "deep"). If None, uses config mode.
 
     Returns:
         Dict with output and metadata
     """
     # Create a fresh system instance for this query (user isolation)
-    system = create_workflow_multi_agent_system(verbose=False)
+    # Pass mode to override the config mode if specified
+    system = create_workflow_multi_agent_system(verbose=False, mode=mode)
 
     if not system:
         raise RuntimeError("Multi-agent system not configured. Call initialize_multi_agent_system() first.")

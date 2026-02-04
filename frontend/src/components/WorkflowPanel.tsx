@@ -42,7 +42,7 @@ import { WorkflowStep, ToolExecution } from '../types';
 import { useSelector } from 'react-redux';
 import { useRouter } from 'next/navigation';
 import type { RootState } from '../store';
-import { formatTime } from '@/utils/dateFormat';
+import { formatTime, formatTimeWithSeconds } from '@/utils/dateFormat';
 
 interface WorkflowPanelProps {
   className?: string;
@@ -491,7 +491,7 @@ const WorkflowPanel: React.FC<WorkflowPanelProps> = ({ className = '', projectId
                               {getStepTitle(step)}
                             </Typography>
                             <Typography variant="caption" sx={{ color: 'text.secondary', whiteSpace: 'nowrap', fontSize: '0.7rem' }}>
-                              {new Date(step.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              {formatTimeWithSeconds(step.timestamp)}
                             </Typography>
                           </Stack>
 

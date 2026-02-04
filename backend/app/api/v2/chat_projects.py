@@ -291,6 +291,10 @@ async def process_message_with_agent(
                         from app.tools.core import (
                             analyze_media_file, analyze_gcs_media,
                         )
+                        # Tool management (for tool_creation_agent)
+                        from app.core.tools.tool_manager import (
+                            save_tool_to_sandbox, load_project_tools,
+                        )
 
                         # Load SANDBOX-SAFE tools
                         # - python_interpreter: runs in sandbox directory, blocked dangerous imports
@@ -311,6 +315,8 @@ async def process_message_with_agent(
                             create_heatmap, create_distribution_plot,
                             # Media analysis
                             analyze_media_file, analyze_gcs_media,
+                            # Tool management (save/load tools in sandbox)
+                            save_tool_to_sandbox, load_project_tools,
                         ]
                         all_tools = batch_convert_tools(smolagent_tools)
 
@@ -362,7 +368,7 @@ async def process_message_with_agent(
                     "title": "Multi-Agent Processing Complete",
                     "description": f"Generated response of {len(output_content)} characters",
                     "step_number": step_number,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.utcnow().isoformat() + 'Z'
                 }
 
                 # Emit to WebSocket
@@ -400,8 +406,43 @@ async def process_message_with_agent(
                     except Exception as e:
                         logger.warning(f"[V2] Failed to start follow-up generation: {e}")
 
-                # Save workflow steps while follow-up generates
-                if ws_callback.collected_steps:
+                # Await follow-up questions before saving response
+                follow_up_questions = []
+                if follow_up_future:
+                    try:
+                        follow_up_questions = await follow_up_future
+                        logger.info(f"[V2] Generated {len(follow_up_questions)} follow-up questions")
+                    except Exception as e:
+                        logger.warning(f"[V2] Failed to generate follow-up questions: {e}")
+                    finally:
+                        if followup_executor:
+                            followup_executor.shutdown(wait=False)
+
+                # Save AI response FIRST (creates WorkflowExecution record)
+                response_metadata = {
+                    "success": result.get("success", True),
+                    "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0,
+                    "follow_up_questions": follow_up_questions
+                }
+                # Support both single file and multiple files
+                if attached_files:
+                    response_metadata["attached_files"] = attached_files
+                elif attached_file:
+                    response_metadata["attached_file"] = attached_file
+
+                response_dict = {
+                    "content": result.get("output", ""),
+                    "metadata": response_metadata
+                }
+                execution_id = await WorkflowDatabase.save_response_to_project(
+                    project_id,
+                    response_dict,
+                    workflow_id
+                )
+                logger.info(f"[V2] Saved AI response to database with {len(follow_up_questions)} follow-up questions, execution_id: {execution_id}")
+
+                # Save workflow steps AFTER WorkflowExecution is created
+                if ws_callback.collected_steps and execution_id:
                     class StepObject:
                         def __init__(self, step_dict):
                             self.type = step_dict.get("step_type", "unknown")
@@ -425,41 +466,6 @@ async def process_message_with_agent(
                             saved_count += 1
                     logger.info(f"[V2] Saved {saved_count}/{len(ws_callback.collected_steps)} workflow steps")
 
-                # Await follow-up questions before saving response
-                follow_up_questions = []
-                if follow_up_future:
-                    try:
-                        follow_up_questions = await follow_up_future
-                        logger.info(f"[V2] Generated {len(follow_up_questions)} follow-up questions")
-                    except Exception as e:
-                        logger.warning(f"[V2] Failed to generate follow-up questions: {e}")
-                    finally:
-                        if followup_executor:
-                            followup_executor.shutdown(wait=False)
-
-                # Save AI response WITH follow-up questions
-                response_metadata = {
-                    "success": result.get("success", True),
-                    "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0,
-                    "follow_up_questions": follow_up_questions
-                }
-                # Support both single file and multiple files
-                if attached_files:
-                    response_metadata["attached_files"] = attached_files
-                elif attached_file:
-                    response_metadata["attached_file"] = attached_file
-
-                response_dict = {
-                    "content": result.get("output", ""),
-                    "metadata": response_metadata
-                }
-                execution_id = await WorkflowDatabase.save_response_to_project(
-                    project_id,
-                    response_dict,
-                    workflow_id
-                )
-                logger.info(f"[V2] Saved AI response to database with {len(follow_up_questions)} follow-up questions, execution_id: {execution_id}")
-
                 # Send chat_completed WebSocket message
                 try:
                     from app.services.websocket_broadcast import websocket_broadcaster
@@ -478,7 +484,7 @@ async def process_message_with_agent(
                             }
                         },
                         "follow_up_questions": follow_up_questions,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.utcnow().isoformat() + 'Z',
                         "action": "project_updated"
                     }
 
@@ -655,6 +661,10 @@ async def send_message_to_project_v2(
                 analyze_media_file, analyze_gcs_media,
             )
             from app.tools.search import gemini_google_search, gemini_realtime_search
+            # Tool management (for tool_creation_agent)
+            from app.core.tools.tool_manager import (
+                save_tool_to_sandbox, load_project_tools,
+            )
 
             smolagent_tools = [
                 # Python execution (CRITICAL for data analysis)
@@ -688,6 +698,9 @@ async def send_message_to_project_v2(
                 # Gemini Google Search (grounding-based real-time search)
                 gemini_google_search,
                 gemini_realtime_search,
+                # Tool management (save/load tools in sandbox)
+                save_tool_to_sandbox,
+                load_project_tools,
             ]
 
             # Convert tools using adapter
@@ -822,11 +835,13 @@ async def send_message_to_project_v2(
                     )
                     # Use multi-agent or single agent based on request parameter
                     if request.use_multi_agent:
-                        logger.info(f"[V2] Running query with Multi-Agent System (sandbox: {sandbox_root})")
+                        mode_str = request.mode or "deep"
+                        logger.info(f"[V2] Running query with Multi-Agent System (mode={mode_str}, sandbox: {sandbox_root})")
                         return run_multi_agent_query(
                             query=request.content,
                             conversation_history=formatted_history,
-                            callbacks=callbacks
+                            callbacks=callbacks,
+                            mode=mode_str
                         )
                     else:
                         logger.info(f"[V2] Running query with Single Agent (debug mode)")
@@ -883,7 +898,7 @@ async def send_message_to_project_v2(
                     "title": "Multi-Agent Processing Complete",
                     "description": f"Generated response of {len(output_content)} characters",
                     "step_number": step_number,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.utcnow().isoformat() + 'Z'
                 }
 
                 # Emit to WebSocket
@@ -903,8 +918,36 @@ async def send_message_to_project_v2(
 
                 logger.info(f"[V2] Emitted completion workflow step with {len(output_content)} chars")
 
-                # Save workflow steps while follow-up generates
-                if ws_callback.collected_steps:
+                # Await follow-up questions before saving response
+                follow_up_questions = []
+                if follow_up_future:
+                    try:
+                        follow_up_questions = await follow_up_future
+                        logger.info(f"[V2] Generated {len(follow_up_questions)} follow-up questions")
+                    except Exception as e:
+                        logger.warning(f"[V2] Failed to generate follow-up questions: {e}")
+                    finally:
+                        if followup_executor:
+                            followup_executor.shutdown(wait=False)
+
+                # Save AI response WITH follow-up questions (creates WorkflowExecution record)
+                response_dict = {
+                    "content": result.get("output", ""),
+                    "metadata": {
+                        "success": result.get("success", True),
+                        "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0,
+                        "follow_up_questions": follow_up_questions
+                    }
+                }
+                execution_id = await WorkflowDatabase.save_response_to_project(
+                    project_id,
+                    response_dict,
+                    workflow_id
+                )
+                logger.info(f"[V2] Saved AI response with {len(follow_up_questions)} follow-up questions, execution_id: {execution_id}")
+
+                # Save workflow steps AFTER WorkflowExecution is created
+                if ws_callback.collected_steps and execution_id:
                     class StepObject:
                         def __init__(self, step_dict):
                             self.type = step_dict.get("step_type", "unknown")
@@ -928,34 +971,6 @@ async def send_message_to_project_v2(
                             saved_count += 1
                     logger.info(f"[V2] Saved {saved_count}/{len(ws_callback.collected_steps)} workflow steps")
 
-                # Await follow-up questions before saving response
-                follow_up_questions = []
-                if follow_up_future:
-                    try:
-                        follow_up_questions = await follow_up_future
-                        logger.info(f"[V2] Generated {len(follow_up_questions)} follow-up questions")
-                    except Exception as e:
-                        logger.warning(f"[V2] Failed to generate follow-up questions: {e}")
-                    finally:
-                        if followup_executor:
-                            followup_executor.shutdown(wait=False)
-
-                # Save AI response WITH follow-up questions
-                response_dict = {
-                    "content": result.get("output", ""),
-                    "metadata": {
-                        "success": result.get("success", True),
-                        "steps_count": len(ws_callback.collected_steps) if ws_callback.collected_steps else 0,
-                        "follow_up_questions": follow_up_questions
-                    }
-                }
-                execution_id = await WorkflowDatabase.save_response_to_project(
-                    project_id,
-                    response_dict,
-                    workflow_id
-                )
-                logger.info(f"[V2] Saved AI response with {len(follow_up_questions)} follow-up questions, execution_id: {execution_id}")
-
                 # Send completion notification via WebSocket
                 # Answer + follow-up questions delivered together for seamless UX
                 from app.services.websocket_broadcast import websocket_broadcaster
@@ -968,7 +983,7 @@ async def send_message_to_project_v2(
                         "id": f"msg_{int(datetime.utcnow().timestamp() * 1000)}",
                         "type": "assistant",
                         "content": result.get("output", ""),
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.utcnow().isoformat() + 'Z',
                         "metadata": {
                             "execution_time": 0,
                             "agent_id": "langchain_agent",
@@ -977,7 +992,7 @@ async def send_message_to_project_v2(
                         }
                     },
                     "follow_up_questions": follow_up_questions,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.utcnow().isoformat() + 'Z',
                     "action": "project_updated"
                 }
 

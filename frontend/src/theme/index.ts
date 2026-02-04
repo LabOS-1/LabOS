@@ -1,10 +1,10 @@
 import { createTheme, ThemeOptions } from '@mui/material/styles';
 
-// LABOS AI theme colors based on current design
+// LABOS AI theme colors aligned with ai4labos.com branding
 const labosColors = {
-  primary: '#0ea5e9',
-  secondary: '#a855f7',
-  accent: '#ec4899',
+  primary: '#4f46e5',    // indigo (website primary)
+  secondary: '#8b5cf6',  // violet (gradient start)
+  accent: '#22d3ee',     // cyan (gradient end)
   success: '#10b981',
   warning: '#f59e0b',
   error: '#ef4444',
@@ -15,6 +15,7 @@ const labosColors = {
 const baseTheme: ThemeOptions = {
   typography: {
     fontFamily: [
+      '"Inter"',
       '-apple-system',
       'BlinkMacSystemFont',
       '"Segoe UI"',
@@ -25,24 +26,24 @@ const baseTheme: ThemeOptions = {
     ].join(','),
   },
   shape: {
-    borderRadius: 8,
+    borderRadius: 12,
   },
   spacing: 8,
 };
 
-// Light theme
+// Light theme (aligned with ai4labos.com)
 export const lightTheme = createTheme({
   ...baseTheme,
   palette: {
     mode: 'light',
     primary: {
       main: labosColors.primary,
-      light: '#38bdf8',
-      dark: '#0284c7',
+      light: '#6366f1',
+      dark: '#4338ca',
     },
     secondary: {
       main: labosColors.secondary,
-      light: '#c084fc',
+      light: '#a78bfa',
       dark: '#7c3aed',
     },
     error: {
@@ -58,7 +59,7 @@ export const lightTheme = createTheme({
       main: labosColors.success,
     },
     background: {
-      default: '#f8fafc',
+      default: '#f7f9ff',
       paper: '#ffffff',
     },
     text: {
@@ -68,19 +69,19 @@ export const lightTheme = createTheme({
   },
 });
 
-// Dark theme (current LABOS design)
+// Dark theme
 export const darkTheme = createTheme({
   ...baseTheme,
   palette: {
     mode: 'dark',
     primary: {
       main: labosColors.primary,
-      light: '#38bdf8',
-      dark: '#0284c7',
+      light: '#6366f1',
+      dark: '#4338ca',
     },
     secondary: {
       main: labosColors.secondary,
-      light: '#c084fc',
+      light: '#a78bfa',
       dark: '#7c3aed',
     },
     error: {
@@ -106,7 +107,6 @@ export const darkTheme = createTheme({
     divider: '#334155',
   },
   components: {
-    // Custom component overrides
     MuiCard: {
       styleOverrides: {
         root: {
@@ -149,5 +149,3 @@ export const darkTheme = createTheme({
     },
   },
 });
-
-

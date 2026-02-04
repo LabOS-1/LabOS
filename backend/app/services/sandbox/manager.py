@@ -47,7 +47,9 @@ class SandboxManager:
     UPLOADS_DIR = "uploads"
     GENERATED_DIR = "generated"
     WORKSPACE_DIR = "workspace"
+    TOOLS_DIR = "tools"
     METADATA_FILE = ".metadata.json"
+    TOOLS_MANIFEST = "tools_manifest.json"
 
     # File size limits
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB for local storage
@@ -172,6 +174,7 @@ class SandboxManager:
         (project_dir / self.UPLOADS_DIR).mkdir(parents=True, exist_ok=True)
         (project_dir / self.GENERATED_DIR).mkdir(parents=True, exist_ok=True)
         (project_dir / self.WORKSPACE_DIR).mkdir(parents=True, exist_ok=True)
+        (project_dir / self.TOOLS_DIR).mkdir(parents=True, exist_ok=True)
 
         # Create metadata file if not exists
         metadata_path = project_dir / self.METADATA_FILE
@@ -498,6 +501,148 @@ class SandboxManager:
         ]
         metadata["updated_at"] = datetime.utcnow().isoformat()
         self._write_metadata(project_dir, metadata)
+
+    # ==================== Tool Management ====================
+
+    def _read_tools_manifest(self, project_dir: Path) -> Dict[str, Any]:
+        """Read tools_manifest.json, returning default structure if not present."""
+        manifest_path = project_dir / self.TOOLS_DIR / self.TOOLS_MANIFEST
+        if manifest_path.exists():
+            return json.loads(manifest_path.read_text())
+        return {"version": "1.0", "tools": []}
+
+    def _write_tools_manifest(self, project_dir: Path, manifest: Dict[str, Any]):
+        """Write tools_manifest.json."""
+        tools_dir = project_dir / self.TOOLS_DIR
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        manifest["updated_at"] = datetime.utcnow().isoformat()
+        manifest_path = tools_dir / self.TOOLS_MANIFEST
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    def save_tool_file(
+        self,
+        user_id: str,
+        project_id: str,
+        tool_name: str,
+        tool_code: str,
+        description: str,
+        category: str = "custom",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Save a tool .py file and update tools_manifest.json.
+
+        Args:
+            user_id: User ID
+            project_id: Project ID
+            tool_name: Tool function name (must be valid Python identifier)
+            tool_code: Complete Python source code
+            description: Tool description
+            category: Tool category
+            metadata: Optional extra metadata
+
+        Returns:
+            Dict with tool_name, filename, local_path, etc.
+        """
+        # Validate tool_name is a valid Python identifier
+        if not tool_name.isidentifier():
+            raise SandboxSecurityError(f"Invalid tool name (not a valid Python identifier): {tool_name}")
+
+        project_dir = self.ensure_project_sandbox(user_id, project_id)
+        tools_dir = project_dir / self.TOOLS_DIR
+
+        filename = f"{tool_name}.py"
+        file_path = tools_dir / filename
+        self._validate_path_within_sandbox(file_path, project_dir)
+
+        # Write the .py file
+        file_path.write_text(tool_code, encoding="utf-8")
+
+        # Compute hash
+        code_hash = hashlib.sha256(tool_code.encode("utf-8")).hexdigest()
+
+        # Update manifest
+        manifest = self._read_tools_manifest(project_dir)
+        # Remove existing entry with same name (update case)
+        manifest["tools"] = [t for t in manifest["tools"] if t["name"] != tool_name]
+        manifest["tools"].append({
+            "name": tool_name,
+            "filename": filename,
+            "description": description,
+            "category": category,
+            "created_at": datetime.utcnow().isoformat(),
+            "created_by_agent": "tool_creation_agent",
+            "code_hash": code_hash,
+            "status": "active",
+            "metadata": metadata or {}
+        })
+        self._write_tools_manifest(project_dir, manifest)
+
+        logger.info(f"Saved tool file: {file_path}")
+
+        return {
+            "tool_name": tool_name,
+            "filename": filename,
+            "local_path": str(file_path),
+            "relative_path": f"{self.TOOLS_DIR}/{filename}",
+            "code_hash": code_hash,
+        }
+
+    def list_tools(
+        self,
+        user_id: str,
+        project_id: str,
+        status: str = "active"
+    ) -> List[Dict[str, Any]]:
+        """Read tools_manifest.json and return tool entries filtered by status."""
+        project_dir = self.get_project_sandbox(user_id, project_id)
+        manifest = self._read_tools_manifest(project_dir)
+        if status:
+            return [t for t in manifest.get("tools", []) if t.get("status") == status]
+        return manifest.get("tools", [])
+
+    def read_tool_code(
+        self,
+        user_id: str,
+        project_id: str,
+        tool_name: str
+    ) -> str:
+        """Read raw Python source from tools/{tool_name}.py."""
+        project_dir = self.get_project_sandbox(user_id, project_id)
+        file_path = project_dir / self.TOOLS_DIR / f"{tool_name}.py"
+        self._validate_path_within_sandbox(file_path, project_dir)
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"Tool not found: {tool_name}")
+
+        return file_path.read_text(encoding="utf-8")
+
+    def delete_tool_file(
+        self,
+        user_id: str,
+        project_id: str,
+        tool_name: str
+    ) -> bool:
+        """Remove .py file and update manifest status to 'deleted'."""
+        project_dir = self.get_project_sandbox(user_id, project_id)
+        file_path = project_dir / self.TOOLS_DIR / f"{tool_name}.py"
+
+        # Remove the file if it exists
+        deleted = False
+        if file_path.exists():
+            self._validate_path_within_sandbox(file_path, project_dir)
+            file_path.unlink()
+            deleted = True
+
+        # Update manifest
+        manifest = self._read_tools_manifest(project_dir)
+        manifest["tools"] = [t for t in manifest["tools"] if t["name"] != tool_name]
+        self._write_tools_manifest(project_dir, manifest)
+
+        if deleted:
+            logger.info(f"Deleted tool: {tool_name} from {project_dir}")
+
+        return deleted
 
     # ==================== Cleanup ====================
 

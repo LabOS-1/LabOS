@@ -47,7 +47,12 @@ def get_sync_database_url() -> str:
 
     if environment == 'production':
         db_name = os.getenv('DB_NAME', 'labos_chat')
-        return f"postgresql+psycopg2://{db_user}:{db_password}@/{db_name}?host=/cloudsql/{cloud_sql_connection_name}"
+        db_host = os.getenv('DB_HOST')
+        if db_host:
+            db_port = os.getenv('DB_PORT', '5432')
+            return f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        else:
+            return f"postgresql+psycopg2://{db_user}:{db_password}@/{db_name}?host=/cloudsql/{cloud_sql_connection_name}"
     else:
         db_name = os.getenv('DEV_DB_NAME', 'labos_chat_dev')
         db_host = os.getenv('DB_HOST', 'localhost')
