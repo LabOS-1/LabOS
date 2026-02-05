@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { useSelector } from 'react-redux';
 import { clearMessages, addMessage, setMessages, setIsLoading } from '@/store/slices/chatSlice';
-import { setSelectedProject } from '@/store/slices/chatProjectsSlice';
+import { setSelectedProject, setSelectedSession, fetchSingleProject, createSession } from '@/store/slices/chatProjectsSlice';
 import { setCurrentWorkflowId as setWebSocketWorkflowId, clearWorkflowState, clearChatResponse, addWorkflowStep } from '@/store/slices/websocketSlice';
+import { setCurrentProjectForWorkflow } from '@/store/middleware/websocketMiddleware';
 import { config } from '@/config';
 import { ChatMessage } from '@/types/chat';
 import { shouldUseGCSUpload, uploadLargeFile } from '@/services/gcs';
@@ -15,7 +15,7 @@ enum MessageState {
   LOADING_HISTORY = 'loading_history'
 }
 
-export const useProjectChat = (projectId: string) => {
+export const useProjectChat = (projectId: string, sessionIdProp?: string) => {
   const dispatch = useAppDispatch();
   const [currentWorkflowId, setCurrentWorkflowId] = useState<string>('');
   const [processedResponseIds, setProcessedResponseIds] = useState<Set<string>>(new Set());
@@ -23,6 +23,136 @@ export const useProjectChat = (projectId: string) => {
   const [mode, setMode] = useState<'fast' | 'deep'>('deep'); // Mode: fast (quick) or deep (full workflow)
   const isSendingRef = useRef(false); // Use ref to track sending state across async operations
   const previousProjectIdRef = useRef<string>(projectId); // Track previous projectId
+  const previousSessionIdRef = useRef<string | undefined | null>(sessionIdProp); // Track previous sessionId
+
+  const {
+    messages,
+    isLoading: chatLoading,
+    isTyping
+  } = useAppSelector((state) => state.chat);
+
+  const {
+    projects,
+    currentProject,
+    currentSession,
+    selectedSessionId
+  } = useAppSelector((state) => state.chatProjects);
+
+  // Use sessionId from prop or from store
+  const sessionId = sessionIdProp || selectedSessionId;
+  const sessions = currentProject?.sessions || [];
+
+  // WebSocket state for AI responses
+  const websocketState = useAppSelector((state) => state.websocket);
+
+  // Load messages for a specific session (defined early so it can be used in useEffect below)
+  const loadSessionMessages = useCallback(async (targetSessionId: string) => {
+    if (!targetSessionId || !projectId) return;
+
+    console.log(`📥 Loading messages for session: ${targetSessionId}`);
+    dispatch(setIsLoading(true));
+    dispatch(clearMessages());
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(
+        `${config.api.baseUrl}/api/v1/chat/projects/${projectId}/sessions/${targetSessionId}/messages`,
+        {
+          headers,
+          credentials: 'include',
+        }
+      );
+
+      if (response.ok) {
+        const messagesData = await response.json();
+        const convertedMessages = messagesData.map((msg: any) => ({
+          id: msg.id,
+          type: msg.role,
+          content: msg.content,
+          timestamp: msg.created_at,
+          metadata: msg.message_metadata
+        }));
+
+        if (!isSendingRef.current) {
+          dispatch(setMessages(convertedMessages));
+          console.log(`✅ Loaded ${convertedMessages.length} messages for session`);
+        }
+      } else {
+        console.error('Failed to load session messages');
+      }
+    } catch (error) {
+      console.error('Error loading session messages:', error);
+    } finally {
+      dispatch(setIsLoading(false));
+    }
+  }, [dispatch, projectId]);
+
+  // Load workflow history for a session or project
+  const loadProjectWorkflows = useCallback(async (targetProjectId: string, headers: Record<string, string>, targetSessionId?: string) => {
+    try {
+      // Use session-specific endpoint if sessionId is provided
+      const endpoint = targetSessionId
+        ? `${config.api.baseUrl}/api/v1/chat/projects/${targetProjectId}/sessions/${targetSessionId}/workflows`
+        : `${config.api.baseUrl}/api/v1/chat/projects/${targetProjectId}/workflows`;
+
+      const workflowResponse = await fetch(endpoint, {
+        headers,
+        credentials: 'include',
+      });
+
+      if (workflowResponse.ok) {
+        const workflowData = await workflowResponse.json();
+        if (workflowData.success && workflowData.data && workflowData.data.workflows) {
+          let totalSteps = 0;
+          workflowData.data.workflows.forEach((workflow: any) => {
+            // Ensure only processing workflow for current project
+            if (workflow.workflow_id && workflow.workflow_id.includes(`project_${targetProjectId}_`)) {
+              if (workflow.steps && workflow.steps.length > 0) {
+                workflow.steps.forEach((step: any) => {
+                  const workflowStep = {
+                    id: step.id,
+                    type: step.type || 'thinking',
+                    title: step.title || step.type,
+                    description: step.description,
+                    tool_name: step.tool_name,
+                    tool_result: step.tool_result,
+                    step_number: step.step_index,
+                    timestamp: step.started_at || workflow.started_at,
+                    workflow_id: workflow.workflow_id,
+                    status: step.status,
+                    // Include new Agent-aware fields and visualization metadata
+                    agent_name: step.agent_name,
+                    agent_task: step.agent_task,
+                    execution_result: step.execution_result,
+                    execution_duration: step.execution_duration,
+                    step_metadata: step.step_metadata // This contains visualizations
+                  };
+                  dispatch(addWorkflowStep(workflowStep));
+                  totalSteps++;
+                });
+                console.log(`✅ Loaded ${workflow.steps.length} workflow steps for workflow ${workflow.workflow_id}`);
+              }
+            } else {
+              console.log(`🚫 Skipped workflow from different project: ${workflow.workflow_id}`);
+            }
+          });
+          console.log(`✅ Loaded ${totalSteps} total workflow steps for project ${targetProjectId}`);
+        }
+      } else {
+        console.log('ℹ️ No workflow history found for project (or access denied)');
+      }
+    } catch (error) {
+      console.error('Error loading project workflow history:', error);
+    }
+  }, [dispatch]);
 
   // Reset local state when projectId changes (switching projects)
   useEffect(() => {
@@ -41,108 +171,127 @@ export const useProjectChat = (projectId: string) => {
     }
   }, [projectId]);
 
-  const { 
-    messages, 
-    isLoading: chatLoading,
-    isTyping 
-  } = useAppSelector((state) => state.chat);
-  
-  const {
-    projects
-  } = useAppSelector((state) => state.chatProjects);
-  
-  // WebSocket state for AI responses
-  const websocketState = useSelector((state: any) => state.websocket);
+  // Reset messages when sessionId changes (switching sessions within same project)
+  useEffect(() => {
+    if (previousSessionIdRef.current !== sessionId && previousProjectIdRef.current === projectId) {
+      console.log(`🔄 Session changed from ${previousSessionIdRef.current} to ${sessionId}, reloading messages and workflows`);
+      previousSessionIdRef.current = sessionId;
+
+      // Trigger message and workflow reload for new session
+      if (sessionId) {
+        // Clear workflow state first
+        dispatch(clearWorkflowState());
+
+        // Load messages
+        loadSessionMessages(sessionId);
+
+        // Load workflows for the new session
+        const token = localStorage.getItem('auth_token');
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        loadProjectWorkflows(projectId, headers, sessionId);
+      }
+    }
+  }, [sessionId, projectId, loadSessionMessages, loadProjectWorkflows, dispatch]);
 
   // Load project data and messages
   const loadProjectData = useCallback(async () => {
-      if (projectId) {
-        // Skip entire loading process if in SENDING state (use ref for reliability)
-        if (messageState === MessageState.SENDING || isSendingRef.current) {
-          console.log('🔒 Skipping project data load - currently sending message');
-          return; // Exit immediately, don't touch any state
+    if (projectId) {
+      // Skip entire loading process if in SENDING state (use ref for reliability)
+      if (messageState === MessageState.SENDING || isSendingRef.current) {
+        console.log('🔒 Skipping project data load - currently sending message');
+        return; // Exit immediately, don't touch any state
+      }
+
+      console.log('🔄 Loading project data in IDLE state');
+      setMessageState(MessageState.LOADING_HISTORY);
+
+      // Load project info first (to get project name, details, and sessions)
+      try {
+        const result = await dispatch(fetchSingleProject(projectId));
+        console.log('✅ Loaded project info for:', projectId);
+
+        // Get the project with sessions from the result
+        if (fetchSingleProject.fulfilled.match(result)) {
+          const projectData = result.payload;
+          // Sessions are auto-selected by the reducer
+          const firstSession = projectData.sessions?.[0];
+          if (firstSession) {
+            console.log('📍 First session:', firstSession.id, firstSession.name);
+          }
         }
+      } catch (error) {
+        console.error('❌ Failed to load project info:', error);
+      }
 
-        console.log('🔄 Loading project data in IDLE state');
-        setMessageState(MessageState.LOADING_HISTORY);
+      // Set current project
+      dispatch(setSelectedProject(projectId));
 
-        // Load project info first (to get project name and details)
-        try {
-          const { fetchSingleProject } = await import('@/store/slices/chatProjectsSlice');
-          await dispatch(fetchSingleProject(projectId));
-          console.log('✅ Loaded project info for:', projectId);
-        } catch (error) {
-          console.error('❌ Failed to load project info:', error);
-        }
+      // Set loading state to prevent showing welcome screen
+      dispatch(setIsLoading(true));
 
-        // Set current project
-        dispatch(setSelectedProject(projectId));
+      // Clear previous messages
+      dispatch(clearMessages());
+      dispatch(clearChatResponse());
+      console.log('🧹 Cleared messages and chat response for project:', projectId);
 
-        // Set loading state to prevent showing welcome screen
-        dispatch(setIsLoading(true));
+      // Set current project for middleware workflow isolation
+      setCurrentProjectForWorkflow(projectId);
+      console.log('🎯 Set middleware to filter workflow for project:', projectId);
 
-        // Clear previous messages
-        dispatch(clearMessages());
-
-
-
-        const { clearChatResponse } = await import('@/store/slices/websocketSlice');
-        dispatch(clearChatResponse());
-        console.log('🧹 Cleared chat response for new project');
-        
-        console.log('🧹 Cleared messages for project:', projectId);
-        
-        // Set current project for middleware workflow isolation
-        try {
-          const { setCurrentProjectForWorkflow } = await import('@/store/middleware/websocketMiddleware');
-          setCurrentProjectForWorkflow(projectId);
-          console.log('🎯 Set middleware to filter workflow for project:', projectId);
-        } catch (e) {
-          console.error('Failed to set middleware project filter:', e);
-        }
-      
-      // Load project's message history
+      // Load messages for current session (or legacy all-project messages if no session)
       try {
         const token = localStorage.getItem('auth_token');
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
         };
-        
+
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-          const response = await fetch(`${config.api.baseUrl}/api/v1/chat/projects/${projectId}/messages`, {
-            headers,
-            credentials: 'include',
-          });
+        // Use session-specific endpoint if we have a sessionId, otherwise use legacy endpoint
+        const messagesUrl = sessionId
+          ? `${config.api.baseUrl}/api/v1/chat/projects/${projectId}/sessions/${sessionId}/messages`
+          : `${config.api.baseUrl}/api/v1/chat/projects/${projectId}/messages`;
 
-          if (response.ok) {
-            const messagesData = await response.json();
-            // Convert backend format to frontend format
-            const convertedMessages = messagesData.map((msg: any) => ({
-              id: msg.id,
-              type: msg.role, // backend uses 'role', frontend uses 'type'
-              content: msg.content,
-              timestamp: msg.created_at,
-              metadata: msg.message_metadata
-            }));
-            
-            // Double check before applying messages (final protection)
-            if (!isSendingRef.current) {
-              dispatch(setMessages(convertedMessages));
-              // Clear loading state immediately after setting messages
-              dispatch(setIsLoading(false));
-              console.log(`✅ Loaded ${convertedMessages.length} messages for project`);
-            } else {
-              console.log('🔒 Skipped setMessages - user is sending a message');
-              dispatch(setIsLoading(false));
-            }
+        console.log(`📥 Loading messages from: ${messagesUrl}`);
 
-          // Load project workflow history
+        const response = await fetch(messagesUrl, {
+          headers,
+          credentials: 'include',
+        });
+
+        if (response.ok) {
+          const messagesData = await response.json();
+          // Convert backend format to frontend format
+          const convertedMessages = messagesData.map((msg: any) => ({
+            id: msg.id,
+            type: msg.role, // backend uses 'role', frontend uses 'type'
+            content: msg.content,
+            timestamp: msg.created_at,
+            metadata: msg.message_metadata
+          }));
+
+          // Double check before applying messages (final protection)
+          if (!isSendingRef.current) {
+            dispatch(setMessages(convertedMessages));
+            // Clear loading state immediately after setting messages
+            dispatch(setIsLoading(false));
+            console.log(`✅ Loaded ${convertedMessages.length} messages for ${sessionId ? 'session' : 'project'}`);
+          } else {
+            console.log('🔒 Skipped setMessages - user is sending a message');
+            dispatch(setIsLoading(false));
+          }
+
+          // Load workflow history for the current session
           // Note: Workflow steps are primarily received via WebSocket for real-time updates
           // Historical workflow data is available but steps may be empty if not properly saved
-          await loadProjectWorkflows(projectId, headers);
+          await loadProjectWorkflows(projectId, headers, sessionId || undefined);
         } else {
           console.error('Failed to load project messages');
           // Clear loading state even if no messages
@@ -158,7 +307,7 @@ export const useProjectChat = (projectId: string) => {
       setMessageState(MessageState.IDLE);
       console.log('✅ Project data loaded, returned to IDLE state');
     }
-  }, [dispatch, projectId, messageState]);
+  }, [dispatch, projectId, sessionId, messageState]);
 
   // Send message to project
   const sendMessage = useCallback(async (messageContent: string) => {
@@ -198,7 +347,7 @@ export const useProjectChat = (projectId: string) => {
       }
 
       // V2: Use LangChain API (project-based messages with chat history)
-      console.log('🚀 Using LangChain V2 API (with chat history)');
+      console.log(`🚀 Using LangChain V2 API (with chat history) for session: ${sessionId}`);
       const response = await fetch(`${config.api.baseUrl}/api/v2/chat/projects/${projectId}/messages`, {
         method: 'POST',
         headers,
@@ -206,7 +355,8 @@ export const useProjectChat = (projectId: string) => {
         body: JSON.stringify({
           content: messageContent,
           role: 'user',
-          mode: mode  // Pass mode (fast/deep) to backend
+          mode: mode,  // Pass mode (fast/deep) to backend
+          session_id: sessionId  // Pass session_id to save message to correct session
         }),
       });
 
@@ -247,7 +397,7 @@ export const useProjectChat = (projectId: string) => {
       setMessageState(MessageState.IDLE);
       isSendingRef.current = false; // Clear ref on error
     }
-  }, [dispatch, projectId, mode, messages.length]);
+  }, [dispatch, projectId, sessionId, mode, messages.length]);
 
   // Send message with multiple files to project
   // Uses existing single-file API, sends first file with message, rest are uploaded separately
@@ -329,6 +479,9 @@ export const useProjectChat = (projectId: string) => {
       formData.append('message', messageContent);
       formData.append('mode', mode);
       formData.append('use_multi_agent', 'true');
+      if (sessionId) {
+        formData.append('session_id', sessionId);  // Pass session_id to save message to correct session
+      }
 
       // Add GCS file IDs (comma-separated)
       if (gcsFileIds.length > 0) {
@@ -378,7 +531,7 @@ export const useProjectChat = (projectId: string) => {
       setMessageState(MessageState.IDLE);
       isSendingRef.current = false;
     }
-  }, [dispatch, projectId, mode]);
+  }, [dispatch, projectId, sessionId, mode]);
 
   // Send a demo video for analysis
   // Fetches the video from public URL and sends it with a prompt
@@ -413,60 +566,6 @@ export const useProjectChat = (projectId: string) => {
       isSendingRef.current = false;
     }
   }, [sendMessageWithFiles, dispatch]);
-
-  // Load project workflow history
-  const loadProjectWorkflows = useCallback(async (projectId: string, headers: Record<string, string>) => {
-    try {
-      const workflowResponse = await fetch(`${config.api.baseUrl}/api/v1/chat/projects/${projectId}/workflows`, {
-        headers,
-        credentials: 'include',
-      });
-
-      if (workflowResponse.ok) {
-        const workflowData = await workflowResponse.json();
-        if (workflowData.success && workflowData.data && workflowData.data.workflows) {
-          let totalSteps = 0;
-          workflowData.data.workflows.forEach((workflow: any) => {
-            // Ensure only processing workflow for current project
-            if (workflow.workflow_id && workflow.workflow_id.includes(`project_${projectId}_`)) {
-              if (workflow.steps && workflow.steps.length > 0) {
-                workflow.steps.forEach((step: any) => {
-                  const workflowStep = {
-                    id: step.id,
-                    type: step.type || 'thinking',
-                    title: step.title || step.type,
-                    description: step.description,
-                    tool_name: step.tool_name,
-                    tool_result: step.tool_result,
-                    step_number: step.step_index,
-                    timestamp: step.started_at || workflow.started_at,
-                    workflow_id: workflow.workflow_id,
-                    status: step.status,
-                    // Include new Agent-aware fields and visualization metadata
-                    agent_name: step.agent_name,
-                    agent_task: step.agent_task,
-                    execution_result: step.execution_result,
-                    execution_duration: step.execution_duration,
-                    step_metadata: step.step_metadata // ✅ This contains visualizations!
-                  };
-                  dispatch(addWorkflowStep(workflowStep));
-                  totalSteps++;
-                });
-                console.log(`✅ Loaded ${workflow.steps.length} workflow steps for workflow ${workflow.workflow_id}`);
-              }
-            } else {
-              console.log(`🚫 Skipped workflow from different project: ${workflow.workflow_id}`);
-            }
-          });
-          console.log(`✅ Loaded ${totalSteps} total workflow steps for project ${projectId}`);
-        }
-      } else {
-        console.log('ℹ️ No workflow history found for project (or access denied)');
-      }
-    } catch (error) {
-      console.error('Error loading project workflow history:', error);
-    }
-  }, [dispatch]);
 
   // Set workflow ID from WebSocket if not already set
   useEffect(() => {
@@ -654,10 +753,42 @@ export const useProjectChat = (projectId: string) => {
 
   const project = projects.find(p => p.id === projectId);
 
+  // Session management
+  const switchSession = useCallback((newSessionId: string) => {
+    if (newSessionId === sessionId) return;
+    console.log(`🔄 Switching to session: ${newSessionId}`);
+    // Clear workflow state from previous session
+    dispatch(clearWorkflowState());
+    dispatch(setSelectedSession(newSessionId));
+    // Messages will be loaded by the sessionId change effect
+  }, [dispatch, sessionId]);
+
+  const createNewSession = useCallback(async (name: string = 'New Chat') => {
+    console.log(`➕ Creating new session: ${name}`);
+    try {
+      const result = await dispatch(createSession({ projectId, request: { name } }));
+      if (createSession.fulfilled.match(result)) {
+        const newSession = result.payload.session;
+        console.log(`✅ Created session: ${newSession.id}`);
+        // Session is auto-selected by the reducer
+        // Clear messages and workflow state for the new empty session
+        dispatch(clearMessages());
+        dispatch(clearWorkflowState());
+        return newSession;
+      }
+    } catch (error) {
+      console.error('❌ Failed to create session:', error);
+    }
+    return null;
+  }, [dispatch, projectId]);
+
   return {
     // Data
     messages,
     project,
+    sessions,
+    currentSession,
+    sessionId,
 
     // States
     chatLoading,
@@ -671,6 +802,8 @@ export const useProjectChat = (projectId: string) => {
     stopProcessing,
     loadProjectData,
     setMode,
+    switchSession,
+    createNewSession,
 
     // Computed
     projectExists

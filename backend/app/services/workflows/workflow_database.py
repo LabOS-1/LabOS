@@ -10,14 +10,18 @@ a clean interface for workflow persistence.
 from typing import Dict, Optional
 from datetime import datetime
 import uuid
+import logging
 
 from app.core.infrastructure.database import AsyncSessionLocal
+
+logger = logging.getLogger(__name__)
 from app.models import (
     WorkflowExecution,
     WorkflowStep as DBWorkflowStep,
     ChatMessage,
     MessageRole,
-    StepStatus
+    StepStatus,
+    WorkflowStatus
 )
 from sqlalchemy import select
 
@@ -34,7 +38,7 @@ class WorkflowDatabase:
 
     @staticmethod
     async def save_workflow_step(
-        project_id: str,
+        session_id: str,
         workflow_id: str,
         step,
         step_index: int
@@ -43,7 +47,7 @@ class WorkflowDatabase:
         Save individual workflow step to database.
 
         Args:
-            project_id: Project identifier
+            session_id: Session identifier
             workflow_id: Workflow identifier
             step: WorkflowStep object to save
             step_index: Sequential step number (1, 2, 3, ...)
@@ -55,17 +59,17 @@ class WorkflowDatabase:
             async with AsyncSessionLocal() as db:
                 # Find the workflow execution
                 query = select(WorkflowExecution).where(
-                    WorkflowExecution.project_id == uuid.UUID(project_id),
+                    WorkflowExecution.session_id == uuid.UUID(session_id),
                     WorkflowExecution.workflow_id == workflow_id
                 )
                 result = await db.execute(query)
                 workflow_execution = result.scalar_one_or_none()
 
                 if not workflow_execution:
-                    print(f"⚠️ No workflow execution found for {workflow_id}")
+                    logger.warning(f"No workflow execution found for {workflow_id}")
                     return False
 
-                # Extract step information
+                # Extract step information (matching Stella schema)
                 step_type = getattr(step, 'type', 'unknown')
                 step_title = getattr(step, 'title', 'Untitled Step')
                 step_description = getattr(step, 'description', '')
@@ -111,26 +115,24 @@ class WorkflowDatabase:
                 db.add(workflow_step)
                 await db.commit()
 
-                print(f"✅ Saved workflow step {step_index} to database: {step_title}")
+                logger.debug(f"Saved workflow step {step_index} to database: {step_title}")
                 return True
 
         except Exception as e:
-            print(f"❌ Error saving workflow step to database: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Error saving workflow step to database: {e}")
             return False
 
     @staticmethod
     async def save_response_to_project(
-        project_id: str,
+        session_id: str,
         response: Dict,
         workflow_id: str
     ) -> Optional[str]:
         """
-        Save AI response and workflow execution to project database.
+        Save AI response and workflow execution to session database.
 
         Args:
-            project_id: Project identifier
+            session_id: Session identifier
             response: Response dictionary with content and metadata
             workflow_id: Workflow identifier
 
@@ -141,7 +143,7 @@ class WorkflowDatabase:
             async with AsyncSessionLocal() as db:
                 # Create assistant message
                 assistant_message = ChatMessage(
-                    project_id=uuid.UUID(project_id),
+                    session_id=uuid.UUID(session_id),
                     role=MessageRole.ASSISTANT,
                     content=response.get("content", "No response content"),
                     message_metadata=response.get("metadata", {})
@@ -153,10 +155,10 @@ class WorkflowDatabase:
 
                 # Create workflow execution record
                 workflow_execution = WorkflowExecution(
-                    project_id=uuid.UUID(project_id),
+                    session_id=uuid.UUID(session_id),
                     message_id=assistant_message.id,
                     workflow_id=workflow_id,
-                    status="COMPLETED",
+                    status=WorkflowStatus.COMPLETED,
                     started_at=datetime.now(),
                     completed_at=datetime.now(),
                     result=response
@@ -166,18 +168,16 @@ class WorkflowDatabase:
                 await db.commit()
                 await db.refresh(workflow_execution)
 
-                print(f"✅ Saved AI response and workflow to project {project_id}")
+                logger.info(f"Saved AI response and workflow to session {session_id}")
                 return str(workflow_execution.id)
 
         except Exception as e:
-            print(f"❌ Error saving response to project: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Error saving response to project: {e}")
             return None
 
     @staticmethod
     async def save_workflow_steps_batch(
-        project_id: str,
+        session_id: str,
         workflow_id: str,
         steps: list
     ) -> int:
@@ -185,7 +185,7 @@ class WorkflowDatabase:
         Save multiple workflow steps to database in batch.
 
         Args:
-            project_id: Project identifier
+            session_id: Session identifier
             workflow_id: Workflow identifier
             steps: List of WorkflowStep objects
 
@@ -195,7 +195,7 @@ class WorkflowDatabase:
         saved_count = 0
         for i, step in enumerate(steps):
             success = await WorkflowDatabase.save_workflow_step(
-                project_id=project_id,
+                session_id=session_id,
                 workflow_id=workflow_id,
                 step=step,
                 step_index=i + 1  # Sequential numbering (1, 2, 3, ...)
@@ -204,6 +204,6 @@ class WorkflowDatabase:
                 saved_count += 1
 
         if saved_count > 0:
-            print(f"✅ Saved {saved_count}/{len(steps)} workflow steps to database")
+            logger.info(f"Saved {saved_count}/{len(steps)} workflow steps to database")
 
         return saved_count

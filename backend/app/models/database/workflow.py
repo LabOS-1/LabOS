@@ -14,28 +14,28 @@ from app.models.enums import WorkflowStatus, StepStatus
 
 
 class WorkflowExecution(Base):
-    """Workflow execution model - tracks AI workflow runs, directly belongs to project"""
+    """Workflow execution model - tracks AI workflow runs, belongs to a session"""
     __tablename__ = "workflow_executions"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey('chat_projects.id'), nullable=False)
+    session_id = Column(UUID(as_uuid=True), ForeignKey('chat_sessions.id'), nullable=False, index=True)
     message_id = Column(UUID(as_uuid=True), ForeignKey('chat_messages.id'), nullable=True)
     workflow_id = Column(String(255), nullable=False)  # Internal workflow identifier
     status = Column(Enum(WorkflowStatus), default=WorkflowStatus.RUNNING, nullable=False)
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime)
     result = Column(JSON)  # Workflow execution result
-    
+
     # Relationships
-    project = relationship("ChatProject", back_populates="workflows")
+    session = relationship("ChatSession", back_populates="workflows")
     trigger_message = relationship("ChatMessage", back_populates="workflows")
     steps = relationship("WorkflowStep", back_populates="execution", cascade="all, delete-orphan")
 
 
 class WorkflowStep(Base):
-    """Individual workflow step model"""
+    """Individual workflow step model - same columns as Stella"""
     __tablename__ = "workflow_steps"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     execution_id = Column(UUID(as_uuid=True), ForeignKey('workflow_executions.id'), nullable=False)
     step_index = Column(Integer, nullable=False)
@@ -43,11 +43,11 @@ class WorkflowStep(Base):
     title = Column(String(255))
     description = Column(Text)
     status = Column(Enum(StepStatus), default=StepStatus.PENDING, nullable=False)
-    
+
     # Legacy fields (keep for backward compatibility)
     tool_name = Column(String(255))
     tool_result = Column(JSON)
-    
+
     # New Agent-aware fields
     agent_name = Column(String(100), nullable=True)      # Which agent executed this step
     agent_task = Column(Text, nullable=True)             # Task given to the agent
@@ -55,10 +55,9 @@ class WorkflowStep(Base):
     execution_result = Column(Text, nullable=True)      # Agent's final result
     execution_duration = Column(Float, nullable=True)   # Duration in seconds
     step_metadata = Column(JSON, default=dict)          # Extended metadata for visualizations, code, etc.
-    
+
     started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime)
-    
+
     # Relationships
     execution = relationship("WorkflowExecution", back_populates="steps")
-

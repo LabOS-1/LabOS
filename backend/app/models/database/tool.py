@@ -69,7 +69,6 @@ class ProjectTool(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    # Relationships
-    project = relationship("ChatProject", backref="tools")
+    # Relationships (tools now stored in sandbox, project relationship removed)
     message = relationship("ChatMessage", backref="created_tools")
     parent_tool = relationship("ProjectTool", remote_side=[id], backref="versions")

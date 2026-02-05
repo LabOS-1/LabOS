@@ -203,15 +203,15 @@ async def callback(request: Request):
         # Check user status in database (Waitlist system)
         from app.core.infrastructure.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
-            # Check if user exists in database
-            stmt = select(User).where(User.id == user_data['id'])
+            # Check if user exists in database (query by auth0_id, not id)
+            stmt = select(User).where(User.auth0_id == user_data['id'])
             result = await db.execute(stmt)
             db_user = result.scalar_one_or_none()
-            
+
             if not db_user:
                 # First-time login: Create user with WAITLIST status
                 db_user = User(
-                    id=user_data['id'],
+                    auth0_id=user_data['id'],  # auth0_id is the string, id is auto-generated UUID
                     email=user_data['email'],
                     name=user_data['name'],
                     picture=user_data['picture'],
@@ -380,7 +380,7 @@ async def get_user(request: Request):
         # Token might be stale (created before admin approved the user)
         from app.core.infrastructure.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
-            stmt = select(User).where(User.id == user_data['id'])
+            stmt = select(User).where(User.auth0_id == user_data['id'])
             result = await db.execute(stmt)
             db_user = result.scalar_one_or_none()
 
@@ -461,7 +461,7 @@ async def submit_waitlist_application(request: Request, db: AsyncSession = Depen
             )
         
         # Get user from database
-        stmt = select(User).where(User.id == user_id)
+        stmt = select(User).where(User.auth0_id == user_id)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
         
@@ -515,7 +515,7 @@ async def get_user_profile(request: Request, db: AsyncSession = Depends(get_db_s
             raise HTTPException(status_code=401, detail="Authentication required")
         
         # Get user from database
-        stmt = select(User).where(User.id == user_id)
+        stmt = select(User).where(User.auth0_id == user_id)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
         
@@ -556,7 +556,7 @@ async def update_user_profile(request: Request, db: AsyncSession = Depends(get_d
         body = await request.json()
         
         # Get user from database
-        stmt = select(User).where(User.id == user_id)
+        stmt = select(User).where(User.auth0_id == user_id)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
         

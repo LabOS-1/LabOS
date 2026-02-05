@@ -41,7 +41,7 @@ export interface ChatMessageMetadata {
   }>;
 }
 
-// Chat response from API
+// Chat response from API or WebSocket
 export interface ChatResponse {
   content: string;
   follow_up_questions?: string[];
@@ -52,6 +52,15 @@ export interface ChatResponse {
     using_real_labos?: boolean;
     follow_up_questions?: string[];
   };
+  // WebSocket message fields
+  id?: string;
+  workflow_id?: string;
+  timestamp?: string;
+  project_id?: string;
+  session_id?: string;
+  action?: string;
+  response?: string;
+  message?: string;
 }
 
 // Chat session information

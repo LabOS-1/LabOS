@@ -2,7 +2,7 @@
 Pydantic Schemas - API request/response models
 """
 
-from .chat import ChatProjectResponse, ChatMessageResponse
+from .chat import ChatProjectResponse, ChatSessionResponse, ChatSessionCreate, ChatMessageResponse
 from .workflow import WorkflowExecutionResponse, WorkflowStepResponse
 from .file import ProjectFileResponse
 from .user import UserResponse, UserUpdateRequest
@@ -12,6 +12,8 @@ from .tool import ToolCreate, ToolUpdate, ToolResponse, ToolListResponse
 __all__ = [
     # Chat
     "ChatProjectResponse",
+    "ChatSessionResponse",
+    "ChatSessionCreate",
     "ChatMessageResponse",
     # Workflow
     "WorkflowExecutionResponse",

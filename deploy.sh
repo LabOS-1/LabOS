@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # VM Configuration
-VM_NAME="labos-vm"
+VM_NAME="stella-vm"
 VM_ZONE="us-central1-a"
 
 # Get VM IP from gcloud

@@ -29,15 +29,32 @@ from fastapi.responses import FileResponse, Response
 from typing import Optional
 import uuid
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from fastapi import Depends
+
 from app.api.v1.auth import get_current_user_id
+from app.core.infrastructure.database import get_db_session
+from app.models.database import User
 
 router = APIRouter()
+
+
+async def get_user_uuid(request: Request, db: AsyncSession) -> str:
+    """Get user UUID from auth0_id for sandbox operations"""
+    auth0_id = await get_current_user_id(request)
+    query = select(User).where(User.auth0_id == auth0_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return str(user.id)
 
 
 # ==================== User Files API (Global) ====================
 
 @router.get("/user")
-async def list_user_files(request: Request):
+async def list_user_files(request: Request, db: AsyncSession = Depends(get_db_session)):
     """
     List all files for the current user across all projects.
 
@@ -45,7 +62,7 @@ async def list_user_files(request: Request):
         List of files with metadata from all user's projects
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -117,6 +134,7 @@ async def list_user_files(request: Request):
 async def download_file_by_id(
     file_id: str,
     request: Request,
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Download a file by its file_id.
@@ -131,7 +149,7 @@ async def download_file_by_id(
         File download response
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -257,6 +275,7 @@ async def download_file_by_id(
 async def delete_file_by_id(
     file_id: str,
     request: Request,
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Delete a file by its file_id.
@@ -271,7 +290,7 @@ async def delete_file_by_id(
         Success message
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -381,6 +400,7 @@ async def upload_project_file(
     request: Request,
     file: UploadFile = File(...),
     category: str = Query("uploads", description="Category: uploads, generated, workspace"),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Upload a file to project sandbox.
@@ -394,7 +414,7 @@ async def upload_project_file(
         File metadata including file_id and path
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -446,6 +466,7 @@ async def list_project_files(
     project_id: str,
     request: Request,
     category: Optional[str] = Query(None, description="Filter by category: uploads, generated, workspace"),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     List all files in a project's sandbox.
@@ -458,7 +479,7 @@ async def list_project_files(
         List of files with metadata
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -517,6 +538,7 @@ async def download_project_file(
     category: str,
     filename: str,
     request: Request,
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Download a file from project sandbox.
@@ -530,7 +552,7 @@ async def download_project_file(
         File download response
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -573,7 +595,8 @@ async def get_project_file_content(
     category: str,
     filename: str,
     request: Request,
-    as_base64: bool = Query(False, description="Return content as base64 (for images)")
+    as_base64: bool = Query(False, description="Return content as base64 (for images)"),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Get file content from project sandbox.
@@ -588,7 +611,7 @@ async def get_project_file_content(
         File content (text or base64)
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()
@@ -667,6 +690,7 @@ async def delete_project_file(
     category: str,
     filename: str,
     request: Request,
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Delete a file from project sandbox.
@@ -680,7 +704,7 @@ async def delete_project_file(
         Success message
     """
     try:
-        user_id = await get_current_user_id(request)
+        user_id = await get_user_uuid(request, db)
 
         from app.services.sandbox import get_sandbox_manager
         sandbox = get_sandbox_manager()

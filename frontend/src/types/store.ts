@@ -8,7 +8,7 @@ import { SimpleFileInfo } from './files';
 import { SimpleMemoryItem } from './memory';
 import { UITheme, UILayout, NotificationItem } from './ui';
 import { UnifiedWebSocketState } from './websocketUnified';
-import type { ChatProject } from './chatProjects';
+import type { ChatProject, ChatSession } from './chatProjects';
 
 // Root state interface
 export interface RootState {
@@ -119,16 +119,20 @@ export interface ChatProjectsState {
   // Data
   projects: ChatProject[];
   currentProject: ChatProject | null;
-  
+  currentSession: ChatSession | null;
+
   // UI State
   selectedProjectId: string | null;
-  
+  selectedSessionId: string | null;
+
   // Loading states
   projectsLoading: boolean;
   createProjectLoading: boolean;
   updateProjectLoading: boolean;
   deleteProjectLoading: boolean;
-  
+  sessionsLoading: boolean;
+  createSessionLoading: boolean;
+
   // Error states
   error: string | null;
 }

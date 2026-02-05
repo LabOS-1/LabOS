@@ -23,6 +23,7 @@ from .enums import (
 from .database import (
     User,
     ChatProject,
+    ChatSession,
     ChatMessage,
     WorkflowExecution,
     WorkflowStep,
@@ -60,6 +61,7 @@ __all__ = [
     # Database Models
     "User",
     "ChatProject",
+    "ChatSession",
     "ChatMessage",
     "WorkflowExecution",
     "WorkflowStep",

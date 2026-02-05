@@ -6,13 +6,11 @@ import {
   Box,
   Card,
   CardContent,
-  Button,
-  Chip
+  Button
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Folder as ProjectIcon,
-  Message as MessageIcon
+  Folder as ProjectIcon
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
@@ -240,19 +238,6 @@ const ChatProjectsPage: React.FC = () => {
                         </Typography>
                       )}
                       
-                      <Box sx={{ mt: 'auto', pt: 1 }}>
-                        <Chip
-                          icon={<MessageIcon sx={{ fontSize: '14px !important' }} />}
-                          label={`${project.message_count} Messages`}
-                          size="small"
-                          variant="outlined"
-                          sx={{ 
-                            bgcolor: 'background.default',
-                            border: 'none',
-                            fontSize: '0.75rem'
-                          }}
-                        />
-                      </Box>
                     </CardContent>
                   </Card>
                 </motion.div>

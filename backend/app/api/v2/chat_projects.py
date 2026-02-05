@@ -32,11 +32,37 @@ from app.core.engines.langchain.langchain_websocket_callback import LangChainWeb
 from app.services.workflows.workflow_event_listener import start_workflow_listener, stop_workflow_listener
 from app.services.workflows.workflow_events import workflow_event_queue
 from app.services.workflows.workflow_database import WorkflowDatabase
-from app.models.database.chat import ChatMessage, MessageRole, ChatProject
+from app.models.database.chat import ChatMessage, ChatSession, MessageRole, ChatProject
+from app.models.database import User
 from app.core.infrastructure.database import get_db_session
-from app.api.v1.auth import get_current_user_id
+from app.api.utils.auth import get_current_user_id, get_or_create_user
 from app.core.infrastructure.cloud_logging import set_log_context
 from app.services.sandbox import get_sandbox_manager
+
+
+async def get_or_create_default_session(project_id: str, db: AsyncSession) -> ChatSession:
+    """Get the first session of a project, or create a default one if none exists"""
+    query = (
+        select(ChatSession)
+        .where(ChatSession.project_id == uuid.UUID(project_id))
+        .order_by(ChatSession.created_at)
+        .limit(1)
+    )
+    result = await db.execute(query)
+    session = result.scalar_one_or_none()
+
+    if not session:
+        # Create default session
+        session = ChatSession(
+            project_id=uuid.UUID(project_id),
+            name="New Chat"
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        logger.info(f"Created default session for project {project_id}: {session.id}")
+
+    return session
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -52,6 +78,7 @@ _multi_agent_initialized = False
 async def process_message_with_agent(
     user_id: str,
     project_id: str,
+    session_id: str,
     message_content: str,
     use_multi_agent: bool,
     mode: str,
@@ -66,13 +93,14 @@ async def process_message_with_agent(
 
     This function handles:
     - Initializing the agent system (if needed)
-    - Loading chat history
+    - Loading chat history from session
     - Running the agent with workflow tracking
     - Saving the response
 
     Args:
         user_id: User ID
         project_id: Project ID
+        session_id: Session ID for chat history
         message_content: The message text
         use_multi_agent: Whether to use multi-agent system
         mode: Agent mode ("fast" or "deep")
@@ -161,15 +189,15 @@ async def process_message_with_agent(
     set_log_context(user_id=user_id, project_id=project_id, workflow_id=workflow_id)
 
     try:
-        # Load recent chat history
-        recent_messages = await get_recent_messages(project_id, db, limit=11)
+        # Load recent chat history from session
+        recent_messages = await get_recent_messages(session_id, db, limit=11)
         if recent_messages and recent_messages[-1].id == user_message_id:
             chat_history = recent_messages[:-1]
         else:
             chat_history = recent_messages
 
         formatted_history = format_messages_for_langchain(chat_history)
-        logger.info(f"[V2] Loaded {len(formatted_history)} messages as chat history")
+        logger.info(f"[V2] Loaded {len(formatted_history)} messages as chat history from session {session_id}")
 
         # Prepare query (string or multimodal list)
         query_content = message_content
@@ -435,7 +463,7 @@ async def process_message_with_agent(
                     "metadata": response_metadata
                 }
                 execution_id = await WorkflowDatabase.save_response_to_project(
-                    project_id,
+                    session_id,
                     response_dict,
                     workflow_id
                 )
@@ -457,7 +485,7 @@ async def process_message_with_agent(
                     for i, step_dict in enumerate(ws_callback.collected_steps):
                         step_obj = StepObject(step_dict)
                         success = await WorkflowDatabase.save_workflow_step(
-                            project_id=project_id,
+                            session_id=session_id,
                             workflow_id=workflow_id,
                             step=step_obj,
                             step_index=i + 1
@@ -529,13 +557,14 @@ class SendMessageRequest(BaseModel):
     role: MessageRole = MessageRole.USER
     mode: Optional[str] = "deep"
     use_multi_agent: bool = True  # Default to multi-agent system (production, not Optional!)
+    session_id: Optional[str] = None  # Optional session ID, uses default session if not provided
 
 
-async def get_recent_messages(project_id: str, db: AsyncSession, limit: int = 10) -> List[ChatMessage]:
-    """Get recent messages from a project for chat history"""
+async def get_recent_messages(session_id: str, db: AsyncSession, limit: int = 10) -> List[ChatMessage]:
+    """Get recent messages from a session for chat history"""
     query = (
         select(ChatMessage)
-        .where(ChatMessage.project_id == uuid.UUID(project_id))
+        .where(ChatMessage.session_id == uuid.UUID(session_id))
         .order_by(ChatMessage.created_at.desc())
         .limit(limit)
     )
@@ -597,8 +626,10 @@ async def send_message_to_project_v2(
     """
     global _initialized
 
-    # Get user ID from authentication
-    user_id = await get_current_user_id(http_request)
+    # Get auth0_id from authentication and resolve to User
+    auth0_id = await get_current_user_id(http_request)
+    user = await get_or_create_user(db, auth0_id)
+    user_id = str(user.id)  # Keep user_id string for logging/sandbox
 
     # Set logging context
     set_log_context(user_id=user_id, project_id=project_id)
@@ -608,10 +639,10 @@ async def send_message_to_project_v2(
         "role": request.role.value
     })
 
-    # Verify project ownership
+    # Verify project ownership (using User.id UUID, not auth0_id)
     project_query = select(ChatProject).where(
         ChatProject.id == uuid.UUID(project_id),
-        ChatProject.user_id == user_id
+        ChatProject.user_id == user.id
     )
     project_result = await db.execute(project_query)
     project = project_result.scalar_one_or_none()
@@ -619,16 +650,35 @@ async def send_message_to_project_v2(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Save user message to database
+    # Get or create session
+    if request.session_id:
+        # Verify session belongs to project
+        session_query = select(ChatSession).where(
+            ChatSession.id == uuid.UUID(request.session_id),
+            ChatSession.project_id == uuid.UUID(project_id)
+        )
+        session_result = await db.execute(session_query)
+        session = session_result.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        # Use default session
+        session = await get_or_create_default_session(project_id, db)
+
+    session_id_str = str(session.id)
+    logger.info(f"[V2] Using session: {session_id_str}")
+
+    # Save user message to database (with session_id)
     user_message = ChatMessage(
-        project_id=uuid.UUID(project_id),
+        session_id=session.id,
         role=MessageRole.USER,
         content=request.content
     )
     db.add(user_message)
 
-    # Update project timestamp
+    # Update project and session timestamps
     project.updated_at = datetime.utcnow()
+    session.updated_at = datetime.utcnow()
 
     await db.commit()
     await db.refresh(user_message)
@@ -751,8 +801,8 @@ async def send_message_to_project_v2(
     set_log_context(user_id=user_id, project_id=project_id, workflow_id=workflow_id)
 
     try:
-        # Load recent chat history (last 10 messages, excluding the one we just saved)
-        recent_messages = await get_recent_messages(project_id, db, limit=11)  # Get 11 to exclude current
+        # Load recent chat history (last 10 messages from session, excluding the one we just saved)
+        recent_messages = await get_recent_messages(session_id_str, db, limit=11)  # Get 11 to exclude current
 
         # Remove the last message (the one we just saved) from history
         if recent_messages and recent_messages[-1].id == user_message.id:
@@ -940,7 +990,7 @@ async def send_message_to_project_v2(
                     }
                 }
                 execution_id = await WorkflowDatabase.save_response_to_project(
-                    project_id,
+                    session_id_str,
                     response_dict,
                     workflow_id
                 )
@@ -962,7 +1012,7 @@ async def send_message_to_project_v2(
                     for i, step_dict in enumerate(ws_callback.collected_steps):
                         step_obj = StepObject(step_dict)
                         success = await WorkflowDatabase.save_workflow_step(
-                            project_id=project_id,
+                            session_id=session_id_str,
                             workflow_id=workflow_id,
                             step=step_obj,
                             step_index=i + 1
@@ -1053,6 +1103,7 @@ async def send_message_with_files_v2(
     files: List[UploadFile] = File(default=[]),  # Multiple files for direct upload
     use_multi_agent: bool = Form(True),
     mode: str = Form("deep"),
+    session_id: Optional[str] = Form(None),  # Optional session ID
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -1066,20 +1117,39 @@ async def send_message_with_files_v2(
 
     Supports up to 5 files per message.
     """
-    # Get user ID
-    user_id = await get_current_user_id(http_request)
+    # Get auth0_id from authentication and resolve to User
+    auth0_id = await get_current_user_id(http_request)
+    user = await get_or_create_user(db, auth0_id)
+    user_id = str(user.id)  # Keep user_id string for logging/sandbox
     set_log_context(user_id=user_id, project_id=project_id)
 
-    # Verify project ownership
+    # Verify project ownership (using User.id UUID, not auth0_id)
     project_query = select(ChatProject).where(
         ChatProject.id == uuid.UUID(project_id),
-        ChatProject.user_id == user_id
+        ChatProject.user_id == user.id
     )
     project_result = await db.execute(project_query)
     project = project_result.scalar_one_or_none()
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Get or create session
+    if session_id:
+        # Verify session belongs to project
+        session_query = select(ChatSession).where(
+            ChatSession.id == uuid.UUID(session_id),
+            ChatSession.project_id == uuid.UUID(project_id)
+        )
+        session_result = await db.execute(session_query)
+        session = session_result.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        # Use default session
+        session = await get_or_create_default_session(project_id, db)
+
+    logger.info(f"[V2] Using session: {session.id}")
 
     # Initialize sandbox for this user/project
     sandbox = get_sandbox_manager()
@@ -1174,9 +1244,9 @@ async def send_message_with_files_v2(
 
     logger.info(f"[V2] Total {len(attached_files_info)} files attached (sandbox storage)")
 
-    # Create chat message with all file attachments
+    # Create chat message with all file attachments (with session_id)
     chat_message = ChatMessage(
-        project_id=uuid.UUID(project_id),
+        session_id=session.id,
         role=MessageRole.USER,
         content=message,
         message_metadata={
@@ -1189,6 +1259,7 @@ async def send_message_with_files_v2(
 
     db.add(chat_message)
     project.updated_at = datetime.now()
+    session.updated_at = datetime.now()
 
     await db.commit()
     await db.refresh(chat_message)
@@ -1199,6 +1270,7 @@ async def send_message_with_files_v2(
     result = await process_message_with_agent(
         user_id=user_id,
         project_id=project_id,
+        session_id=str(session.id),
         message_content=message,
         use_multi_agent=use_multi_agent,
         mode=mode,
