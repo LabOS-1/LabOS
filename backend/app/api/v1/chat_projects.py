@@ -780,7 +780,7 @@ async def cancel_project_workflow(
     try:
         auth0_id = await get_current_user_id(http_request)
         user = await get_or_create_user(db, auth0_id)
-    require_approved(user)
+        require_approved(user)
 
         # Verify project ownership
         project_query = select(ChatProject).where(
