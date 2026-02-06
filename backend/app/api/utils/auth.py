@@ -138,23 +138,30 @@ def _parse_token(token: str) -> str | None:
 
 async def get_or_create_user(db: AsyncSession, auth0_id: str) -> User:
     """
-    Get user by auth0_id or create if not exists.
+    Get user by auth0_id. Raises 401 if user doesn't exist.
+
+    Users should ONLY be created through the Auth0 callback flow,
+    which has access to the full user info including email.
 
     Args:
         db: Database session
         auth0_id: The Auth0 user identifier
 
     Returns:
-        User: The user object (existing or newly created)
+        User: The user object
+
+    Raises:
+        HTTPException: 401 if user not found (must login via Auth0 first)
     """
     query = select(User).where(User.auth0_id == auth0_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
     if not user:
-        user = User(auth0_id=auth0_id, email=f"{auth0_id}@placeholder.com")
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        logger.warning(f"User not found: {auth0_id}. Must login via Auth0 first.")
+        raise HTTPException(
+            status_code=401,
+            detail="User not found. Please login via the main login page first."
+        )
 
     return user

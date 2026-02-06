@@ -209,38 +209,41 @@ async def callback(request: Request):
             db_user = result.scalar_one_or_none()
 
             if not db_user:
-                # First-time login: Create user with WAITLIST status
-                db_user = User(
-                    auth0_id=user_data['id'],  # auth0_id is the string, id is auto-generated UUID
-                    email=user_data['email'],
-                    name=user_data['name'],
-                    picture=user_data['picture'],
-                    email_verified=user_data['email_verified'],
-                    status=UserStatus.WAITLIST,
-                    last_login=datetime.utcnow()
-                )
-                db.add(db_user)
-                await db.commit()
-                logger.info(f"✨ New user created with WAITLIST status: {user_data['email']}")
-                
-                # Add status to user_data
-                user_data['status'] = UserStatus.WAITLIST.value
+                # First-time login: User not in database yet
+                # DON'T create user here - they must fill out the waitlist form first
+                # Just redirect to waitlist form with Auth0 user data
+                logger.info(f"🆕 New user {user_data['email']} - redirecting to waitlist form")
+
+                # Add status indicator (not in DB yet)
+                user_data['status'] = 'new'
                 user_data['is_admin'] = False
-                
-                # Create auth token for waitlist user
+
+                # Create auth token with user data from Auth0
                 import base64
                 user_token = base64.b64encode(json.dumps(user_data).encode()).decode()
-                
-                # Redirect to waitlist pending page with auth token
+
+                # Redirect to waitlist form (not pending page) with auth token
                 return RedirectResponse(
-                    url=f"{original_base_url}/waitlist-pending?email={user_data['email']}&auth_token={user_token}", 
+                    url=f"{original_base_url}/waitlist?email={user_data['email']}&auth_token={user_token}",
                     status_code=302
                 )
             
-            # Update last login timestamp
+            # Update last login timestamp and sync user info from Auth0
             db_user.last_login = datetime.utcnow()
+
+            # Update user info if it's outdated (placeholder email or missing info)
+            if db_user.email and '@placeholder.com' in db_user.email:
+                logger.info(f"🔄 Updating user info from Auth0: {db_user.email} -> {user_data['email']}")
+                db_user.email = user_data['email']
+            if not db_user.name and user_data.get('name'):
+                db_user.name = user_data['name']
+            if not db_user.picture and user_data.get('picture'):
+                db_user.picture = user_data['picture']
+            if not db_user.email_verified and user_data.get('email_verified'):
+                db_user.email_verified = user_data['email_verified']
+
             await db.commit()
-            
+
             # Check user status
             if db_user.status == UserStatus.WAITLIST:
                 logger.warning(f"⏳ User {user_data['email']} is still on waitlist")
@@ -388,24 +391,17 @@ async def get_user(request: Request):
                 # Update user_data with fresh status from database
                 user_data['status'] = db_user.status.value
                 user_data['is_admin'] = db_user.is_admin
-                logger.info(f"✅ Refreshed user status from DB: {user_data['email']} -> {db_user.status.value}")
+                # Also update email from DB if token has placeholder
+                if db_user.email and '@placeholder.com' not in db_user.email:
+                    user_data['email'] = db_user.email
+                logger.info(f"✅ Refreshed user status from DB: {user_data.get('email')} -> {db_user.status.value}")
             else:
-                # User not in database - create as WAITLIST (don't trust stale token data)
-                logger.warning(f"⚠️ User {user_data.get('id')} not found in database, creating as WAITLIST")
-                new_user = User(
-                    auth0_id=user_data.get('id') or user_data.get('sub'),
-                    email=user_data.get('email', 'unknown@placeholder.com'),
-                    name=user_data.get('name'),
-                    status=UserStatus.WAITLIST,
-                    is_admin=False
+                # User not in database - must login via Auth0 first
+                logger.warning(f"⚠️ User {user_data.get('id')} not found in database. Must login via Auth0.")
+                raise HTTPException(
+                    status_code=401,
+                    detail="User not found. Please login via the main login page first."
                 )
-                db.add(new_user)
-                await db.commit()
-                await db.refresh(new_user)
-                # Force status to waitlist regardless of what token says
-                user_data['status'] = UserStatus.WAITLIST.value
-                user_data['is_admin'] = False
-                logger.info(f"✅ Created new user {new_user.email} with WAITLIST status")
 
         return JSONResponse(content=user_data)
 
@@ -456,33 +452,62 @@ async def logout(request: Request):
 
 @router.post("/waitlist/submit")
 async def submit_waitlist_application(request: Request, db: AsyncSession = Depends(get_db_session)):
-    """Submit waitlist application with additional user information"""
+    """Submit waitlist application - creates user in database with form data"""
     try:
-        # Get user_id from authentication
-        user_id = await get_current_user_id(request)
-        if not user_id:
+        # Get user data from authentication token
+        # Token contains Auth0 user info (id, email, name, picture)
+        user_data = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+            try:
+                import base64
+                decoded_data = base64.b64decode(token).decode()
+                user_data = json.loads(decoded_data)
+            except:
+                try:
+                    user_data = json.loads(token)
+                except:
+                    pass
+
+        if not user_data or not user_data.get('id'):
             raise HTTPException(status_code=401, detail="Authentication required")
-        
+
+        auth0_id = user_data.get('id') or user_data.get('sub')
+
         # Parse request body
         body = await request.json()
-        
+
         # Validate required fields
         required_fields = ['first_name', 'last_name', 'job_title', 'organization', 'country', 'experience_level', 'use_case']
         missing_fields = [field for field in required_fields if not body.get(field)]
         if missing_fields:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Missing required fields: {', '.join(missing_fields)}"
             )
-        
-        # Get user from database
-        stmt = select(User).where(User.auth0_id == user_id)
+
+        # Check if user already exists in database
+        stmt = select(User).where(User.auth0_id == auth0_id)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
-        
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
+
+        if user:
+            # User exists - just update their application data
+            logger.info(f"📝 Updating existing user's waitlist application: {user.email}")
+        else:
+            # Create new user with Auth0 data + application data
+            user = User(
+                auth0_id=auth0_id,
+                email=user_data.get('email'),
+                name=user_data.get('name'),
+                picture=user_data.get('picture'),
+                email_verified=user_data.get('email_verified', False),
+                status=UserStatus.WAITLIST
+            )
+            db.add(user)
+            logger.info(f"✨ Creating new user from waitlist form: {user_data.get('email')}")
+
         # Update user with waitlist application data
         user.first_name = body.get('first_name')
         user.last_name = body.get('last_name')
@@ -492,9 +517,10 @@ async def submit_waitlist_application(request: Request, db: AsyncSession = Depen
         user.experience_level = body.get('experience_level')
         user.use_case = body.get('use_case')
         user.updated_at = datetime.utcnow()
-        
+
         await db.commit()
-        
+        await db.refresh(user)
+
         logger.info(f"✅ Waitlist application submitted for user: {user.email}")
         
         # Send notification email to admin (non-blocking)
