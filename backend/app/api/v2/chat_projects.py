@@ -34,8 +34,18 @@ from app.services.workflows.workflow_events import workflow_event_queue
 from app.services.workflows.workflow_database import WorkflowDatabase
 from app.models.database.chat import ChatMessage, ChatSession, MessageRole, ChatProject
 from app.models.database import User
+from app.models.enums import UserStatus
 from app.core.infrastructure.database import get_db_session
 from app.api.utils.auth import get_current_user_id, get_or_create_user
+
+
+def require_approved(user: User) -> None:
+    """Check if user is approved. Raises 403 if not."""
+    if user.status != UserStatus.APPROVED:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied. Your account is not approved (status: {user.status.value})"
+        )
 from app.core.infrastructure.cloud_logging import set_log_context
 from app.services.sandbox import get_sandbox_manager
 
@@ -629,6 +639,7 @@ async def send_message_to_project_v2(
     # Get auth0_id from authentication and resolve to User
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
     user_id = str(user.id)  # Keep user_id string for logging/sandbox
 
     # Set logging context
@@ -1120,6 +1131,7 @@ async def send_message_with_files_v2(
     # Get auth0_id from authentication and resolve to User
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
     user_id = str(user.id)  # Keep user_id string for logging/sandbox
     set_log_context(user_id=user_id, project_id=project_id)
 

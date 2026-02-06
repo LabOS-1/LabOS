@@ -36,18 +36,27 @@ from fastapi import Depends
 from app.api.v1.auth import get_current_user_id
 from app.core.infrastructure.database import get_db_session
 from app.models.database import User
+from app.models.enums import UserStatus
 
 router = APIRouter()
 
 
 async def get_user_uuid(request: Request, db: AsyncSession) -> str:
-    """Get user UUID from auth0_id for sandbox operations"""
+    """Get user UUID from auth0_id for sandbox operations. Requires approved user."""
     auth0_id = await get_current_user_id(request)
     query = select(User).where(User.auth0_id == auth0_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Check if user is approved
+    if user.status != UserStatus.APPROVED:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied. Your account is not approved (status: {user.status.value})"
+        )
+
     return str(user.id)
 
 

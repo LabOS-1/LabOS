@@ -31,16 +31,26 @@ FRONTEND_URL = os.getenv('FRONTEND_URL') or os.getenv('AUTH0_BASE_URL', 'http://
 _gmail_service = None
 
 
-def get_gmail_service():
+def reset_gmail_service():
+    """Reset cached Gmail service to force re-initialization"""
+    global _gmail_service
+    _gmail_service = None
+    logger.info("🔄 Gmail service cache cleared")
+
+
+def get_gmail_service(force_refresh: bool = False):
     """
     Get or create Gmail API service instance with OAuth2 credentials
+
+    Args:
+        force_refresh: If True, force refresh the token even if cached
 
     Returns:
         Gmail API service instance
     """
     global _gmail_service
 
-    if _gmail_service is not None:
+    if _gmail_service is not None and not force_refresh:
         return _gmail_service
 
     try:
@@ -51,7 +61,7 @@ def get_gmail_service():
 
         # Create credentials from refresh token
         creds = Credentials(
-            token=GMAIL_ACCESS_TOKEN,
+            token=GMAIL_ACCESS_TOKEN if not force_refresh else None,
             refresh_token=GMAIL_REFRESH_TOKEN,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=GMAIL_CLIENT_ID,
@@ -59,12 +69,15 @@ def get_gmail_service():
             scopes=['https://www.googleapis.com/auth/gmail.send']
         )
 
-        # Refresh the token if needed
-        if not creds.valid:
-            if creds.expired and creds.refresh_token:
+        # Refresh the token if needed or forced
+        if not creds.valid or force_refresh:
+            if creds.refresh_token:
                 logger.info("🔄 Refreshing Gmail OAuth2 access token...")
                 creds.refresh(Request())
                 logger.info("✅ Gmail OAuth2 token refreshed successfully")
+            else:
+                logger.error("❌ No refresh token available to refresh credentials")
+                return None
 
         # Build Gmail API service
         _gmail_service = build('gmail', 'v1', credentials=creds)
@@ -73,6 +86,7 @@ def get_gmail_service():
 
     except Exception as e:
         logger.error(f"❌ Failed to initialize Gmail API service: {e}")
+        _gmail_service = None
         return None
 
 
@@ -80,7 +94,8 @@ def send_email(
     to_email: str,
     subject: str,
     html_content: str,
-    plain_content: Optional[str] = None
+    plain_content: Optional[str] = None,
+    _retry: bool = False
 ) -> bool:
     """
     Send an email using Gmail API with OAuth2
@@ -90,13 +105,14 @@ def send_email(
         subject: Email subject
         html_content: HTML email body
         plain_content: Plain text email body (optional, will strip HTML if not provided)
+        _retry: Internal flag to prevent infinite retry loops
 
     Returns:
         bool: True if email sent successfully, False otherwise
     """
     try:
-        # Get Gmail service
-        service = get_gmail_service()
+        # Get Gmail service (force refresh if this is a retry)
+        service = get_gmail_service(force_refresh=_retry)
         if service is None:
             logger.warning("⚠️ Gmail service not available, skipping email send")
             return False
@@ -127,6 +143,11 @@ def send_email(
         return True
 
     except HttpError as e:
+        # Check if it's an authentication error (401) and retry with fresh token
+        if e.resp.status == 401 and not _retry:
+            logger.warning("⚠️ Gmail API 401 error, refreshing token and retrying...")
+            reset_gmail_service()
+            return send_email(to_email, subject, html_content, plain_content, _retry=True)
         logger.error(f"❌ Gmail API error sending email to {to_email}: {e}")
         return False
     except Exception as e:

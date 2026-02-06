@@ -9,9 +9,45 @@ from fastapi import Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import User
+from app.models import User, UserStatus
 
 logger = logging.getLogger(__name__)
+
+
+async def require_approved_user(request: Request, db: AsyncSession) -> User:
+    """
+    Require that the current user is approved.
+
+    This dependency should be used on all protected endpoints that require
+    an approved user (not waitlist, rejected, or suspended).
+
+    Returns:
+        User: The approved user object
+
+    Raises:
+        HTTPException: 401 if not authenticated, 403 if not approved
+    """
+    # Get user ID from auth
+    user_id = await get_current_user_id(request)
+
+    # Look up user in database
+    query = select(User).where(User.auth0_id == user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        logger.warning(f"User not found in database: {user_id}")
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Check if user is approved
+    if user.status != UserStatus.APPROVED:
+        logger.warning(f"Access denied for non-approved user: {user.email} (status: {user.status.value})")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied. Your account status is: {user.status.value}"
+        )
+
+    return user
 
 
 async def get_current_user_id(request: Request) -> str:

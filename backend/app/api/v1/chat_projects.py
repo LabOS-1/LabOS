@@ -14,10 +14,20 @@ import uuid
 from app.core.infrastructure.database import get_db_session
 from app.core.infrastructure.cloud_logging import get_logger
 from app.api.utils.auth import get_current_user_id, get_or_create_user
+from app.models.enums import UserStatus
 
 logger = get_logger(__name__)
 from app.models.database import ChatProject, ChatSession, ChatMessage, WorkflowExecution, User
 from app.models.schemas import ChatProjectResponse, ChatSessionResponse, ChatSessionCreate, ChatMessageResponse
+
+
+def require_approved(user: User) -> None:
+    """Check if user is approved. Raises 403 if not."""
+    if user.status != UserStatus.APPROVED:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied. Your account is not approved (status: {user.status.value})"
+        )
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -52,6 +62,8 @@ async def get_projects(
     """Get user's chat projects with session counts"""
     auth0_id = await get_current_user_id(request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
+    require_approved(user)
 
     # Query projects with session counts
     query = (
@@ -99,6 +111,7 @@ async def create_project(
     """Create a new chat project (without auto-creating a session)"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     project = ChatProject(
         user_id=user.id,
@@ -134,6 +147,7 @@ async def update_project(
     """Update a project"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     query = select(ChatProject).where(
         ChatProject.id == uuid.UUID(project_id),
@@ -182,6 +196,7 @@ async def delete_project(
     """Delete a project and all its sessions/messages/workflows"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     query = select(ChatProject).where(
         ChatProject.id == uuid.UUID(project_id),
@@ -220,6 +235,7 @@ async def get_project(
     """Get a single chat project by ID with its sessions"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Query project with sessions
     query = (
@@ -278,6 +294,7 @@ async def get_project_sessions(
     """Get all sessions for a project"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -329,6 +346,7 @@ async def create_session(
     """Create a new chat session in a project"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -371,6 +389,7 @@ async def update_session(
     """Update a session name"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -427,6 +446,7 @@ async def delete_session(
     """Delete a session and all its messages/workflows"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -473,6 +493,7 @@ async def get_session_messages(
     """Get messages for a session"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -533,6 +554,7 @@ async def get_project_messages_legacy(
     """Get all messages for a project (across all sessions) - legacy endpoint"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -587,6 +609,7 @@ async def get_session_workflows(
     """Get workflow executions for a session with their steps"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -677,6 +700,7 @@ async def get_project_workflows_legacy(
     """Get all workflow executions for a project (across all sessions) - legacy endpoint"""
     auth0_id = await get_current_user_id(http_request)
     user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
     # Verify project ownership
     project_query = select(ChatProject).where(
@@ -756,6 +780,7 @@ async def cancel_project_workflow(
     try:
         auth0_id = await get_current_user_id(http_request)
         user = await get_or_create_user(db, auth0_id)
+    require_approved(user)
 
         # Verify project ownership
         project_query = select(ChatProject).where(
