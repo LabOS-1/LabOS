@@ -60,8 +60,8 @@ async def check_admin_permission(request: Request, db: AsyncSession) -> User:
         from app.api.v1.chat_projects import get_current_user_id as get_user_id_from_auth
         user_id = await get_user_id_from_auth(request)
         
-        # Query user from database
-        stmt = select(User).where(User.id == user_id)
+        # Query user from database by auth0_id
+        stmt = select(User).where(User.auth0_id == user_id)
         result = await db.execute(stmt)
         current_user = result.scalar_one_or_none()
         
@@ -126,7 +126,7 @@ async def get_waitlist_users(
         # Convert to response format
         user_list = [
             {
-                "id": user.id,
+                "id": str(user.id),
                 "email": user.email,
                 "name": user.name,
                 "picture": user.picture,
@@ -194,24 +194,24 @@ async def approve_user(
         # Update user status
         target_user.status = UserStatus.APPROVED
         target_user.approved_at = datetime.utcnow()
-        target_user.approved_by = admin_user.id
+        target_user.approved_by = str(admin_user.id)
         target_user.rejection_reason = None  # Clear any previous rejection reason
-        
+
         await db.commit()
-        
+
         logger.info(f"✅ Admin {admin_user.email} approved user {target_user.email}")
-        
+
         # Send approval email asynchronously (non-blocking)
         user_name = target_user.name or f"{target_user.first_name or ''} {target_user.last_name or ''}".strip() or None
         asyncio.create_task(
             asyncio.to_thread(send_approval_email, target_user.email, user_name)
         )
-        
+
         return {
             "success": True,
             "message": f"User {target_user.email} has been approved",
             "data": {
-                "user_id": target_user.id,
+                "user_id": str(target_user.id),
                 "email": target_user.email,
                 "status": target_user.status.value,
                 "approved_at": target_user.approved_at.isoformat()
@@ -263,7 +263,7 @@ async def reject_user(
             "success": True,
             "message": f"User {target_user.email} has been rejected",
             "data": {
-                "user_id": target_user.id,
+                "user_id": str(target_user.id),
                 "email": target_user.email,
                 "status": target_user.status.value,
                 "rejection_reason": rejection_reason
@@ -306,7 +306,7 @@ async def update_user(
             target_user.status = update_data.status
             if update_data.status == UserStatus.APPROVED:
                 target_user.approved_at = datetime.utcnow()
-                target_user.approved_by = admin_user.id
+                target_user.approved_by = str(admin_user.id)
         
         if update_data.is_admin is not None:
             target_user.is_admin = update_data.is_admin
@@ -322,7 +322,7 @@ async def update_user(
             "success": True,
             "message": f"User {target_user.email} has been updated",
             "data": {
-                "user_id": target_user.id,
+                "user_id": str(target_user.id),
                 "email": target_user.email,
                 "status": target_user.status.value,
                 "is_admin": target_user.is_admin

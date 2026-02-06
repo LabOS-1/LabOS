@@ -390,7 +390,22 @@ async def get_user(request: Request):
                 user_data['is_admin'] = db_user.is_admin
                 logger.info(f"✅ Refreshed user status from DB: {user_data['email']} -> {db_user.status.value}")
             else:
-                logger.warning(f"⚠️ User {user_data['id']} not found in database, using token data")
+                # User not in database - create as WAITLIST (don't trust stale token data)
+                logger.warning(f"⚠️ User {user_data.get('id')} not found in database, creating as WAITLIST")
+                new_user = User(
+                    auth0_id=user_data.get('id') or user_data.get('sub'),
+                    email=user_data.get('email', 'unknown@placeholder.com'),
+                    name=user_data.get('name'),
+                    status=UserStatus.WAITLIST,
+                    is_admin=False
+                )
+                db.add(new_user)
+                await db.commit()
+                await db.refresh(new_user)
+                # Force status to waitlist regardless of what token says
+                user_data['status'] = UserStatus.WAITLIST.value
+                user_data['is_admin'] = False
+                logger.info(f"✅ Created new user {new_user.email} with WAITLIST status")
 
         return JSONResponse(content=user_data)
 
