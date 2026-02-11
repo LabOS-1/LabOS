@@ -27,12 +27,14 @@ function LayoutWrapper({ children }: { children: React.ReactNode }) {
   const hasToken = typeof window !== 'undefined' && localStorage.getItem('auth_token');
 
   // Pages that should NEVER use AppLayout
-  const noLayoutPages = ['/', '/welcome', '/verify-email', '/onboarding', '/terms', '/privacy', '/cookies', '/profile'];
+  const noLayoutPages = ['/', '/welcome', '/verify-email', '/onboarding', '/terms', '/privacy', '/cookies', '/profile', '/waitlist-pending', '/access-denied'];
   const isNoLayoutPage = noLayoutPages.includes(pathname) ||
                          pathname.startsWith('/welcome') ||
                          pathname.startsWith('/terms') ||
                          pathname.startsWith('/privacy') ||
-                         pathname.startsWith('/cookies');
+                         pathname.startsWith('/cookies') ||
+                         pathname.startsWith('/waitlist-pending') ||
+                         pathname.startsWith('/access-denied');
 
   // Decision is made IMMEDIATELY based on token presence
   const shouldUseLayout = hasToken && !isNoLayoutPage;

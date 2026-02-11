@@ -16,7 +16,7 @@ from googleapiclient.errors import HttpError
 logger = logging.getLogger(__name__)
 
 # Gmail OAuth2 configuration
-GMAIL_USER = os.getenv('GMAIL_USER', 'labos.agent2026@gmail.com')
+GMAIL_USER = os.getenv('GMAIL_USER', 'stella.agent2026@gmail.com')
 GMAIL_CLIENT_ID = os.getenv('GMAIL_CLIENT_ID', '')
 GMAIL_CLIENT_SECRET = os.getenv('GMAIL_CLIENT_SECRET', '')
 GMAIL_REFRESH_TOKEN = os.getenv('GMAIL_REFRESH_TOKEN', '')

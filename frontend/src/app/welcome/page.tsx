@@ -61,7 +61,13 @@ const policyLinks = [
 
 const WelcomePage: React.FC = () => {
   const handleLogin = () => {
-    window.location.href = `${config.api.baseUrl}/api/v1/auth/login`;
+    // prompt=login forces Auth0 to show login screen even if SSO session exists
+    window.location.href = `${config.api.baseUrl}/api/v1/auth/login?prompt=login`;
+  };
+
+  const handleRegister = () => {
+    // screen_hint=signup shows Auth0 signup form; prompt=login bypasses SSO session
+    window.location.href = `${config.api.baseUrl}/api/v1/auth/login?prompt=login&screen_hint=signup`;
   };
 
   return (
@@ -104,7 +110,7 @@ const WelcomePage: React.FC = () => {
                 Login
               </Button>
               <Button
-                onClick={handleLogin}
+                onClick={handleRegister}
                 sx={{
                   background: ws.grad,
                   color: '#fff',
@@ -211,7 +217,7 @@ const WelcomePage: React.FC = () => {
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="center">
               <Button
-                onClick={handleLogin}
+                onClick={handleRegister}
                 sx={{
                   background: ws.grad,
                   color: '#fff',

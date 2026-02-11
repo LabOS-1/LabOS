@@ -25,7 +25,7 @@ const AuthSync: React.FC = () => {
         console.log('🎯 AuthSync: Found auth token in URL, storing it');
         localStorage.setItem('auth_token', authToken);
         // Also set as cookie for middleware access
-        document.cookie = `auth_token=${authToken}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+        document.cookie = `auth_token=${authToken}; path=/; max-age=${60 * 60 * 24}; SameSite=Lax`;
         tokenToUse = authToken;
         // Clean up URL by removing the token parameter
         const newUrl = new URL(window.location.href);
@@ -36,7 +36,7 @@ const AuthSync: React.FC = () => {
         tokenToUse = localStorage.getItem('auth_token');
         // Sync to cookie if exists in localStorage but not in cookie
         if (tokenToUse && !document.cookie.includes('auth_token=')) {
-          document.cookie = `auth_token=${tokenToUse}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+          document.cookie = `auth_token=${tokenToUse}; path=/; max-age=${60 * 60 * 24}; SameSite=Lax`;
         }
       }
       dispatch(setLoading(true));

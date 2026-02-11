@@ -140,7 +140,7 @@ LOGGING_CONFIG = {
 
 # === Gmail OAuth2 Configuration ===
 GMAIL_CONFIG = {
-    "user": os.getenv("GMAIL_USER", "labos.agent2026@gmail.com"),
+    "user": os.getenv("GMAIL_USER", "stella.agent2026@gmail.com"),
     "client_id": os.getenv("GMAIL_CLIENT_ID", ""),  # Secret
     "client_secret": os.getenv("GMAIL_CLIENT_SECRET", ""),  # Secret
     "refresh_token": os.getenv("GMAIL_REFRESH_TOKEN", ""),  # Secret

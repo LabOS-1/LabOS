@@ -372,31 +372,6 @@ const WaitlistPendingPage: React.FC = () => {
             </Box>
 
             {/* Additional Info */}
-            <Typography 
-              variant="caption" 
-              color="text.secondary"
-              sx={{ 
-                mt: 3, 
-                display: 'block',
-                fontSize: '0.75rem'
-              }}
-            >
-              Need immediate access? Contact us at{' '}
-              <Typography
-                component="a"
-                href="mailto:labos.agent2026@gmail.com"
-                sx={{
-                  color: theme.palette.primary.main,
-                  textDecoration: 'none',
-                  fontWeight: 500,
-                  '&:hover': {
-                    textDecoration: 'underline'
-                  }
-                }}
-              >
-                labos.agent2026@gmail.com
-              </Typography>
-            </Typography>
           </Paper>
         </motion.div>
       </Container>

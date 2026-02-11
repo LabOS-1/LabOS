@@ -149,7 +149,7 @@ const AccessDeniedPage: React.FC = () => {
                 <EmailIcon sx={{ color: theme.palette.info.main, fontSize: 20 }} />
                 <Typography
                   component="a"
-                  href="mailto:labos.agent2026@gmail.com"
+                  href="mailto:stella.agent2026@gmail.com"
                   sx={{
                     color: theme.palette.primary.main,
                     textDecoration: 'none',
@@ -160,7 +160,7 @@ const AccessDeniedPage: React.FC = () => {
                     }
                   }}
                 >
-                  labos.agent2026@gmail.com
+                  stella.agent2026@gmail.com
                 </Typography>
               </Box>
             </Paper>

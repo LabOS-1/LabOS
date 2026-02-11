@@ -416,7 +416,7 @@ const PrivacyPage: React.FC = () => {
                 LABOS Team
               </Typography>
               <Typography variant="body1" sx={{ mb: 1, color: 'text.secondary' }}>
-                Email: <Typography component="a" href="mailto:labos.agent2026@gmail.com" sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}>labos.agent2026@gmail.com</Typography>
+                Email: <Typography component="a" href="mailto:stella.agent2026@gmail.com" sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}>stella.agent2026@gmail.com</Typography>
               </Typography>
             </Box>
 

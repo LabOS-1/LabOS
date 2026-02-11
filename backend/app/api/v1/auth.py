@@ -98,6 +98,16 @@ async def login(request: Request):
             'state': state_encoded
         }
         
+        # Support prompt parameter to force re-authentication (bypass Auth0 SSO session)
+        prompt = request.query_params.get('prompt')
+        if prompt:
+            auth_params['prompt'] = prompt
+        
+        # Support screen_hint to show signup form instead of login
+        screen_hint = request.query_params.get('screen_hint')
+        if screen_hint:
+            auth_params['screen_hint'] = screen_hint
+        
         auth_url = f"{config['domain']}/authorize?{urlencode(auth_params)}"
         
         logger.info(f"Redirecting to Auth0 login: {auth_url}")
@@ -189,7 +199,8 @@ async def callback(request: Request):
             'email': user.get('email'),
             'name': user.get('name'),
             'picture': user.get('picture'),
-            'email_verified': user.get('email_verified', False)
+            'email_verified': user.get('email_verified', False),
+            'issued_at': int(datetime.utcnow().timestamp())  # Token expiration tracking
         }
         
         # Check email verification requirement
@@ -222,9 +233,9 @@ async def callback(request: Request):
                 import base64
                 user_token = base64.b64encode(json.dumps(user_data).encode()).decode()
 
-                # Redirect to waitlist form (not pending page) with auth token
+                # Redirect to waitlist-pending page with auth token
                 return RedirectResponse(
-                    url=f"{original_base_url}/waitlist?email={user_data['email']}&auth_token={user_token}",
+                    url=f"{original_base_url}/waitlist-pending?email={user_data['email']}&auth_token={user_token}",
                     status_code=302
                 )
             
@@ -379,6 +390,17 @@ async def get_user(request: Request):
             user_data = json.loads(auth_cookie)
             logger.info(f"User info requested via cookie: {user_data.get('email')}")
 
+        # Check token expiration (24 hours)
+        issued_at = user_data.get('issued_at')
+        if issued_at:
+            token_age = int(datetime.utcnow().timestamp()) - issued_at
+            if token_age > 86400:  # 24 hours
+                logger.warning(f"⏰ Token expired for user {user_data.get('email')} (age: {token_age}s)")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Token expired. Please login again."
+                )
+
         # CRITICAL: Query database to get latest user status
         # Token might be stale (created before admin approved the user)
         from app.core.infrastructure.database import AsyncSessionLocal
@@ -396,12 +418,11 @@ async def get_user(request: Request):
                     user_data['email'] = db_user.email
                 logger.info(f"✅ Refreshed user status from DB: {user_data.get('email')} -> {db_user.status.value}")
             else:
-                # User not in database - must login via Auth0 first
-                logger.warning(f"⚠️ User {user_data.get('id')} not found in database. Must login via Auth0.")
-                raise HTTPException(
-                    status_code=401,
-                    detail="User not found. Please login via the main login page first."
-                )
+                # New user not in database yet - return token data with status 'new'
+                # This allows the waitlist-pending page to work properly
+                user_data['status'] = 'new'
+                user_data['is_admin'] = False
+                logger.info(f"🆕 New user {user_data.get('email')} not in DB yet, returning status='new'")
 
         return JSONResponse(content=user_data)
 
@@ -473,6 +494,11 @@ async def submit_waitlist_application(request: Request, db: AsyncSession = Depen
         if not user_data or not user_data.get('id'):
             raise HTTPException(status_code=401, detail="Authentication required")
 
+        # Ensure email is present
+        user_email = user_data.get('email')
+        if not user_email:
+            raise HTTPException(status_code=400, detail="Email is required. Please login with an email-enabled account.")
+
         auth0_id = user_data.get('id') or user_data.get('sub')
 
         # Parse request body
@@ -524,7 +550,7 @@ async def submit_waitlist_application(request: Request, db: AsyncSession = Depen
         logger.info(f"✅ Waitlist application submitted for user: {user.email}")
         
         # Send notification email to admin (non-blocking)
-        admin_email = os.getenv('ADMIN_EMAIL', 'labos.agent2026@gmail.com')
+        admin_email = os.getenv('ADMIN_EMAIL', 'stella.agent2026@gmail.com')
         user_name = f"{user.first_name} {user.last_name}".strip()
         asyncio.create_task(
             asyncio.to_thread(send_admin_notification, admin_email, user.email, user_name)
@@ -534,7 +560,7 @@ async def submit_waitlist_application(request: Request, db: AsyncSession = Depen
             content={
                 "success": True,
                 "message": "Application submitted successfully",
-                "user_id": user_id
+                "user_id": auth0_id
             },
             status_code=200
         )
